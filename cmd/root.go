@@ -14,6 +14,7 @@ import (
 
 	"github.com/drdreo/daylog/internal/event"
 	"github.com/drdreo/daylog/internal/store"
+	"github.com/drdreo/daylog/internal/view"
 )
 
 var rootCmd = &cobra.Command{
@@ -123,6 +124,8 @@ func tildify(path string) string {
 // case-insensitive ULID prefix, or a case-insensitive substring of the
 // tldr. Open todos are searched first, then all events, newest first.
 // Ambiguity is an error listing the candidates — never a guess.
+// The returned event carries its EFFECTIVE type (reclassifications
+// applied), so callers judge current state, not the original line.
 func resolveTarget(target string) (event.Event, error) {
 	all, err := store.ReadAll()
 	if err != nil {
@@ -132,19 +135,17 @@ func resolveTarget(target string) (event.Event, error) {
 		return event.Event{}, fmt.Errorf("no events in the store yet")
 	}
 
-	closed := map[string]bool{}
-	for _, e := range all {
-		if e.Type == event.TypeDone && e.Parent != nil {
-			closed[*e.Parent] = true
-		}
-	}
+	reclassified, doneBy := view.Resolutions(all)
 	var openTodos, rest []event.Event
 	for i := len(all) - 1; i >= 0; i-- { // newest first
 		e := all[i]
 		if e.Type == event.TypeDone || e.Type == event.TypeReclassify {
 			continue
 		}
-		if e.Type == event.TypeTodo && !closed[e.ID] {
+		if to, ok := reclassified[e.ID]; ok {
+			e.Type = to
+		}
+		if _, isClosed := doneBy[e.ID]; e.Type == event.TypeTodo && !isClosed {
 			openTodos = append(openTodos, e)
 		} else {
 			rest = append(rest, e)

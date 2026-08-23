@@ -42,21 +42,7 @@ type Day struct {
 // Resolution is deterministic: events are ULID-sorted, so for competing
 // reclassify events the last ULID wins (§8), with all opinions preserved.
 func Fold(all []event.Event, date time.Time, now time.Time) Day {
-	reclassified := map[string]string{} // target id → effective type
-	doneBy := map[string]event.Event{}  // target id → closing done event
-	for _, e := range all {
-		if e.Parent == nil {
-			continue
-		}
-		switch e.Type {
-		case event.TypeReclassify:
-			if to, ok := e.Meta["to"].(string); ok && to != "" {
-				reclassified[*e.Parent] = to
-			}
-		case event.TypeDone:
-			doneBy[*e.Parent] = e
-		}
-	}
+	reclassified, doneBy := Resolutions(all)
 
 	toEntry := func(e event.Event) Entry {
 		en := Entry{
@@ -106,6 +92,29 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 		}
 	}
 	return day
+}
+
+// Resolutions folds the correction events into lookup maps: the effective
+// type per reclassified entry (ULID-sorted input means the last reclassify
+// wins) and the closing done event per closed entry. Shared by Fold and by
+// CLI target resolution so both agree on an entry's current state.
+func Resolutions(all []event.Event) (reclassified map[string]string, doneBy map[string]event.Event) {
+	reclassified = map[string]string{}
+	doneBy = map[string]event.Event{}
+	for _, e := range all {
+		if e.Parent == nil {
+			continue
+		}
+		switch e.Type {
+		case event.TypeReclassify:
+			if to, ok := e.Meta["to"].(string); ok && to != "" {
+				reclassified[*e.Parent] = to
+			}
+		case event.TypeDone:
+			doneBy[*e.Parent] = e
+		}
+	}
+	return reclassified, doneBy
 }
 
 // eventDay extracts the calendar date of an event in its own recorded

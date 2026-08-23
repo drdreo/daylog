@@ -100,6 +100,33 @@ func TestFoldToleratesUnknownTypes(t *testing.T) {
 	}
 }
 
+func TestNotePromotedToTodoIsTracked(t *testing.T) {
+	note := ev("2026-08-22", event.TypeNote, "human:cli", "cache the embeddings")
+	rec := ev("2026-08-23", event.TypeReclassify, "human:cli", "promoting")
+	rec.Parent = &note.ID
+	rec.Meta = map[string]any{"to": "todo"}
+
+	day := Fold([]event.Event{note, rec}, date("2026-08-23"), time.Now())
+	if len(day.OpenTodos) != 1 || day.OpenTodos[0].ID != note.ID {
+		t.Fatalf("promoted note should be an open todo: %+v", day.OpenTodos)
+	}
+
+	// and the round trip: reverting to note untracks it again
+	rev := ev("2026-08-23", event.TypeReclassify, "human:cli", "reverting")
+	rev.Parent = &note.ID
+	rev.Meta = map[string]any{"to": "note"}
+	day = Fold([]event.Event{note, rec, rev}, date("2026-08-23"), time.Now())
+	if len(day.OpenTodos) != 0 {
+		t.Errorf("reverted note should leave open todos: %+v", day.OpenTodos)
+	}
+
+	// Resolutions (used by CLI target resolution) must agree
+	reclassified, _ := Resolutions([]event.Event{note, rec, rev})
+	if reclassified[note.ID] != "note" {
+		t.Errorf("effective type after revert = %q, want note", reclassified[note.ID])
+	}
+}
+
 func TestReclassifiedTodoLeavesQueue(t *testing.T) {
 	todo := ev("2026-08-22", event.TypeTodo, "agent:claude", "consider caching embeddings")
 	rec := ev("2026-08-23", event.TypeReclassify, "human:cli", "adopting")
