@@ -3,6 +3,7 @@
 #
 #   ./install.sh              install to ~/.local/bin (override: DAYLOG_INSTALL_DIR)
 #   ./install.sh --timer      also enable the systemd user timer for `daylog poll gh`
+#   ./install.sh --omarchy    also install + enable the Omarchy bar widget
 #
 # Works on Linux and macOS; on Windows use `go install .` instead.
 set -eu
@@ -10,11 +11,13 @@ set -eu
 INSTALL_DIR="${DAYLOG_INSTALL_DIR:-$HOME/.local/bin}"
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 WITH_TIMER=false
+WITH_OMARCHY=false
 
 for arg in "$@"; do
     case "$arg" in
         --timer) WITH_TIMER=true ;;
-        *) echo "usage: ./install.sh [--timer]" >&2; exit 1 ;;
+        --omarchy) WITH_OMARCHY=true ;;
+        *) echo "usage: ./install.sh [--timer] [--omarchy]" >&2; exit 1 ;;
     esac
 done
 
@@ -48,6 +51,23 @@ if [ "$WITH_TIMER" = true ]; then
     systemctl --user daemon-reload
     systemctl --user enable --now daylog-poll-gh.timer
     echo "Timer enabled: systemctl --user list-timers daylog-poll-gh.timer"
+fi
+
+if [ "$WITH_OMARCHY" = true ]; then
+    if ! command -v omarchy >/dev/null 2>&1; then
+        echo "error: --omarchy needs the omarchy CLI (an Omarchy 4 install)" >&2
+        exit 1
+    fi
+    PLUGIN_DIR="$HOME/.config/omarchy/plugins/drdreo.daylog"
+    if [ -e "$PLUGIN_DIR" ] && [ ! -e "$PLUGIN_DIR/manifest.json" ]; then
+        echo "error: $PLUGIN_DIR exists but is not the daylog plugin — not touching it" >&2
+        exit 1
+    fi
+    mkdir -p "$PLUGIN_DIR"
+    cp "$REPO_DIR"/omarchy-plugin/manifest.json "$REPO_DIR"/omarchy-plugin/*.qml "$PLUGIN_DIR/"
+    omarchy-shell shell rescanPlugins || true # shell may not be running (e.g. TTY)
+    omarchy plugin enable drdreo.daylog || echo "note: enable it later with: omarchy plugin enable drdreo.daylog"
+    echo "Omarchy widget installed: $PLUGIN_DIR"
 fi
 
 echo

@@ -1,6 +1,6 @@
 # Daylog — Architecture Document
 
-**Status:** v1.2 (Phases 1–2 implemented) · **Date:** 2026-08-23
+**Status:** v1.3 (Phases 1–2 & Omarchy widget implemented; Phase 3 deferred) · **Date:** 2026-08-23
 **Problem:** A single developer runs multiple independent coding agents (Claude Code, Codex, pi) across multiple machines. Work fragments into parallel sessions, side quests, and ~16 open PRs. There is no single place that answers "what actually happened today, and what needs me?"
 
 ---
@@ -192,9 +192,9 @@ Phase 1 — the spine: event schema, `daylog add/today/render`, agent instructio
 
 Phase 2 — GitHub poller: snapshot + diff + transitions, systemd user timer, ref-join in the `today` view. This is where the "16 PRs" problem is actually solved.
 
-Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins.
+Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins. *(Deferred by decision: single-machine use is the reality today; revisit when a second machine actually joins.)*
 
-Phase 4 — surfaces: Omarchy widget, EOD summarizer.
+Phase 4 — surfaces: Omarchy widget (implemented in `omarchy-plugin/`, a Quickshell bar-widget plugin for Omarchy 4 that reads `daylog today --json`), EOD summarizer.
 
 Phase 5 — integrations as demand proves out: Linear/Jira poller (clone of the gh poller), Slack inbound bridge.
 

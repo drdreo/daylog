@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "drdreo.daylog",
+  "name": "Daylog",
+  "version": "1.0.0",
+  "author": "drdreo",
+  "license": "MIT",
+  "description": "Today's daylog in the bar: agent and human activity, open todos, the agent inbox awaiting triage, and live PR status.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Daylog",
+    "description": "One bar icon and one panel: today's entries, open todos, the untriaged agent inbox, and every open PR with checks and review state.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "daylogPath": "daylog",
+      "refreshIntervalSec": 60,
+      "icon": "󰃭"
+    },
+    "schema": [
+      { "key": "daylogPath", "type": "string", "label": "daylog binary", "defaultValue": "daylog", "description": "Command or absolute path to the daylog CLI." },
+      { "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)", "min": 10, "max": 3600, "step": 10, "defaultValue": 60 },
+      { "key": "icon", "type": "string", "label": "Bar icon", "defaultValue": "󰃭" }
+    ]
+  }
+}
