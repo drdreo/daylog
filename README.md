@@ -10,10 +10,16 @@ snapshot join in the day view).
 ## Install
 
 ```sh
-go build -o daylog .          # or: go install github.com/drdreo/daylog@latest
+./install.sh                  # builds and installs to ~/.local/bin
+./install.sh --timer          # …and enables the systemd poll timer (Linux)
 ```
 
-Single static binary, works on Linux, macOS, and Windows.
+Override the destination with `DAYLOG_INSTALL_DIR`. Or do it by hand —
+it's a single static binary, works on Linux, macOS, and Windows:
+
+```sh
+go build -o daylog .          # or: go install github.com/drdreo/daylog@latest
+```
 
 ## Usage
 
