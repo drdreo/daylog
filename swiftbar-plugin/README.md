@@ -27,7 +27,7 @@ ships — no python, no jq.
 
 | Where | Action |
 |---|---|
-| Inbox / todo row → submenu | **✓ Mark done** (`daylog done <id>` — dismisses an inbox proposal or finishes your own), **Open PR** when the entry references one |
+| Inbox / todo row → submenu | **Mark done** (`daylog done <id>` — dismisses an inbox proposal or finishes your own), **Open PR** when the entry references one |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders |
 

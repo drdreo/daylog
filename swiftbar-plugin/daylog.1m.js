@@ -141,7 +141,7 @@ function todoRow(e, ctx, lines) {
     tooltip: entryTooltip(e),
     color: alarming ? URGENT : undefined,
   }))
-  lines.push(line('-- ✓ Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
+  lines.push(line('-- Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
   if (pr && pr.url) {
     lines.push(line('-- Open ' + pr.repo + '#' + pr.number + ' — ' + prStatusLabel(pr), {
       href: String(pr.url), sfimage: 'arrow.up.right.square',
