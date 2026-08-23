@@ -76,12 +76,31 @@ show its live status, and an **Open PRs** section lists everything open —
 marked STALE when the snapshot is hours old. In `--json`, entries gain a
 `pr` object and the day gains `prs` + `prs_fetched_at`.
 
-To run it on a timer (Linux):
+The poller itself is cross-platform — `daylog poll gh` works anywhere the
+`gh` CLI does. Only the scheduling mechanism is per-platform; systemd is
+just the Linux convenience, not a dependency.
+
+**Linux** (systemd user timer):
 
 ```sh
 cp docs/systemd/daylog-poll-gh.{service,timer} ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now daylog-poll-gh.timer
+```
+
+**macOS** — cron is the two-line option (`crontab -e`):
+
+```
+*/10 * * * * /usr/local/bin/daylog poll gh
+```
+
+or use launchd with a `StartInterval: 600` agent plist if you want it to
+survive sleep/wake more gracefully.
+
+**Windows** (Task Scheduler):
+
+```powershell
+schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.exe poll gh"
 ```
 
 ## Producer identity
