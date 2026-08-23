@@ -15,7 +15,7 @@
 // <xbar.dependencies>daylog</xbar.dependencies>
 // <xbar.abouturl>https://github.com/drdreo/daylog</xbar.abouturl>
 // <xbar.var>string(DAYLOG_PATH=""): Absolute path to the daylog CLI (empty = search PATH).</xbar.var>
-// <xbar.var>string(DAYLOG_ICON="calendar.badge.checkmark"): SF Symbol for the calm menu bar state (SwiftBar only).</xbar.var>
+// <xbar.var>string(DAYLOG_ICON="note.text"): SF Symbol for the menu bar icon (SwiftBar only).</xbar.var>
 //
 // <swiftbar.environment>[DAYLOG_PATH=, DAYLOG_ICON=]</swiftbar.environment>
 // <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
@@ -174,14 +174,16 @@ function render(day, ctx) {
   var lines = []
 
   // ---------- menu bar title: lights up when something needs you ----------
-  // The pair tells the story at a glance: a checked calendar when the day is
-  // triaged, flipping to a red exclamation (plus count) when it is not.
+  // The day's note: calm normally, red with a count when something needs you
+  // (untriaged inbox, failing checks). A warning triangle means the widget
+  // itself couldn't load the day.
+  var iconName = ctx.icon || 'note.text'
   if (ctx.error && day === null) {
-    lines.push(line(':calendar.badge.exclamationmark:', { sfcolor: 'orange' }))
+    lines.push(line(':exclamationmark.triangle:', { sfcolor: 'orange' }))
   } else if (attention > 0) {
-    lines.push(line(':calendar.badge.exclamationmark: ' + attention, { sfcolor: 'red' }))
+    lines.push(line(':' + iconName + ': ' + attention, { sfcolor: 'red' }))
   } else {
-    lines.push(line(':' + (ctx.icon || 'calendar.badge.checkmark') + ':'))
+    lines.push(line(':' + iconName + ':'))
   }
   lines.push('---')
 
