@@ -5,15 +5,16 @@ Producers append immutable events through one CLI; the daily view is derived
 by folding over them. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full
 design; this build covers the spine (schema + `add`/`done`/`reclassify`/
 `today`/`render`), the GitHub poller with the PR snapshot join in the day
-view, and the Omarchy bar widget. (Multi-machine sync — Phase 3 — is
-deliberately deferred.)
+view, and the bar widgets (Omarchy on Linux, SwiftBar on macOS).
+(Multi-machine sync — Phase 3 — is deliberately deferred.)
 
 ## Install
 
 ```sh
 ./install.sh                  # builds and installs to ~/.local/bin
 ./install.sh --timer          # …and enables the systemd poll timer (Linux)
-./install.sh --omarchy        # …and installs the Omarchy bar widget
+./install.sh --omarchy        # …and installs the Omarchy bar widget (Linux)
+./install.sh --swiftbar       # …and installs the SwiftBar menu bar widget (macOS)
 ```
 
 Override the destination with `DAYLOG_INSTALL_DIR`. Or do it by hand —
@@ -111,15 +112,21 @@ survive sleep/wake more gracefully.
 schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.exe poll gh"
 ```
 
-## The Omarchy bar widget
+## The bar widgets
 
-[`omarchy-plugin/`](omarchy-plugin/) is a bar widget for Omarchy 4's
-Quickshell desktop: an icon that lights up when something needs you
-(untriaged agent todos, failing PR checks) and a panel with the whole day —
-entries, todos, inbox, and open PRs. It reads only `daylog today --json`,
-exactly as the architecture prescribes for consumers. Install with
-`./install.sh --omarchy`; details in
-[omarchy-plugin/README.md](omarchy-plugin/README.md).
+Two thin surfaces over the same contract — an icon that lights up when
+something needs you (untriaged agent todos, failing PR checks) and a
+panel/menu with the whole day: entries, todos, inbox, and open PRs. Both
+read only `daylog today --json`, exactly as the architecture prescribes for
+consumers.
+
+- **Linux / Omarchy** — [`omarchy-plugin/`](omarchy-plugin/) is a bar widget
+  for Omarchy 4's Quickshell desktop. Install with `./install.sh --omarchy`;
+  details in [omarchy-plugin/README.md](omarchy-plugin/README.md).
+- **macOS** — [`swiftbar-plugin/`](swiftbar-plugin/) is a menu bar widget
+  for [SwiftBar](https://swiftbar.app) (xbar-compatible), a single
+  dependency-free JXA script. Install with `./install.sh --swiftbar`;
+  details in [swiftbar-plugin/README.md](swiftbar-plugin/README.md).
 
 ## Producer identity
 
