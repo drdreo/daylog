@@ -178,7 +178,7 @@ The sync layer is deliberately a dumb file-replication concern *underneath* the 
 
 ## 9. Consumers
 
-All consumers read exactly one interface: `daylog today --json` (and `daylog render` for markdown). The terminal view ships first and validates the schema through real daily use. The Omarchy bar widget comes second — a QML bar-widget plugin whose panel shells out to `daylog today --json` and renders entries grouped by type, with PR decorations from the snapshot join; it is by design the *thinnest* component in the system, replaceable in an afternoon, which is exactly why UI was deferred to the end. The EOD summarizer (§7.3) and any future phone view are additional consumers with no special privileges.
+All consumers read exactly one interface: `daylog today --json` (and `daylog render` for markdown). The terminal view ships first and validates the schema through real daily use. The bar widgets come second — the Omarchy plugin (a QML bar-widget plugin for Quickshell) and its macOS sibling (a SwiftBar/xbar menu bar plugin in dependency-free JXA), both shelling out to `daylog today --json` and rendering entries grouped by type, with PR decorations from the snapshot join; each is by design the *thinnest* component in the system, replaceable in an afternoon, which is exactly why UI was deferred to the end. That both exist without either knowing about the other is the dumb-consumer principle paying out. The EOD summarizer (§7.3) and any future phone view are additional consumers with no special privileges.
 
 ## 10. Failure modes and trust boundaries
 
@@ -194,7 +194,7 @@ Phase 2 — GitHub poller: snapshot + diff + transitions, systemd user timer, re
 
 Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins. *(Deferred by decision: single-machine use is the reality today; revisit when a second machine actually joins.)*
 
-Phase 4 — surfaces: Omarchy widget (implemented in `omarchy-plugin/`, a Quickshell bar-widget plugin for Omarchy 4 that reads `daylog today --json`), EOD summarizer.
+Phase 4 — surfaces: Omarchy widget (implemented in `omarchy-plugin/`, a Quickshell bar-widget plugin for Omarchy 4 that reads `daylog today --json`), macOS menu bar widget (implemented in `swiftbar-plugin/`, a SwiftBar plugin reading the same contract), EOD summarizer.
 
 Phase 5 — integrations as demand proves out: Linear/Jira poller (clone of the gh poller), Slack inbound bridge.
 

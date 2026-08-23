@@ -3,7 +3,8 @@
 #
 #   ./install.sh              install to ~/.local/bin (override: DAYLOG_INSTALL_DIR)
 #   ./install.sh --timer      also enable the systemd user timer for `daylog poll gh`
-#   ./install.sh --omarchy    also install + enable the Omarchy bar widget
+#   ./install.sh --omarchy    also install + enable the Omarchy bar widget (Linux)
+#   ./install.sh --swiftbar   also install the SwiftBar menu bar widget (macOS)
 #
 # Works on Linux and macOS; on Windows use `go install .` instead.
 set -eu
@@ -12,12 +13,14 @@ INSTALL_DIR="${DAYLOG_INSTALL_DIR:-$HOME/.local/bin}"
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 WITH_TIMER=false
 WITH_OMARCHY=false
+WITH_SWIFTBAR=false
 
 for arg in "$@"; do
     case "$arg" in
         --timer) WITH_TIMER=true ;;
         --omarchy) WITH_OMARCHY=true ;;
-        *) echo "usage: ./install.sh [--timer] [--omarchy]" >&2; exit 1 ;;
+        --swiftbar) WITH_SWIFTBAR=true ;;
+        *) echo "usage: ./install.sh [--timer] [--omarchy] [--swiftbar]" >&2; exit 1 ;;
     esac
 done
 
@@ -68,6 +71,25 @@ if [ "$WITH_OMARCHY" = true ]; then
     omarchy-shell shell rescanPlugins || true # shell may not be running (e.g. TTY)
     omarchy plugin enable drdreo.daylog || echo "note: enable it later with: omarchy plugin enable drdreo.daylog"
     echo "Omarchy widget installed: $PLUGIN_DIR"
+fi
+
+if [ "$WITH_SWIFTBAR" = true ]; then
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "error: --swiftbar is macOS-only" >&2
+        exit 1
+    fi
+    # SwiftBar stores the user-chosen plugin folder in its defaults; without
+    # it, SwiftBar has never been launched (or never got a folder picked).
+    SWIFTBAR_DIR=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)
+    if [ -z "$SWIFTBAR_DIR" ]; then
+        echo "error: SwiftBar plugin folder not set — install SwiftBar (brew install swiftbar)," >&2
+        echo "       launch it once to pick a plugin folder, then re-run" >&2
+        exit 1
+    fi
+    cp "$REPO_DIR/swiftbar-plugin/daylog.1m.js" "$SWIFTBAR_DIR/"
+    chmod +x "$SWIFTBAR_DIR/daylog.1m.js"
+    open -g swiftbar://refreshallplugins || true # SwiftBar may not be running
+    echo "SwiftBar widget installed: $SWIFTBAR_DIR/daylog.1m.js"
 fi
 
 echo
