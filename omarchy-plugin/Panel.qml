@@ -24,6 +24,88 @@ Panel {
   // keeps telling the truth (same pattern as the agents panel).
   property double nowMs: Date.now()
 
+  // ---------------------------------------------------------------- cursor
+  //
+  // One flat cursor over every row in visual order — inbox, open todos,
+  // today's entries, then PRs — addressed by a global index so arrow keys
+  // walk the whole panel. Rows compute their own index from these offsets.
+  property bool cursorActive: false
+  property int cursorIndex: -1
+
+  readonly property int inboxOffset: 0
+  readonly property int todosOffset: store.agentInbox.length
+  readonly property int entriesOffset: todosOffset + store.openTodos.length
+  readonly property int prsOffset: entriesOffset + store.entries.length
+  readonly property int rowCount: prsOffset + store.prs.length
+
+  // A refresh can shrink the lists underneath the cursor.
+  onRowCountChanged: if (cursorIndex >= rowCount) cursorIndex = rowCount - 1
+
+  function moveCursor(dy) {
+    if (rowCount === 0) return
+    if (!cursorActive) {
+      cursorActive = true
+      cursorIndex = dy > 0 ? 0 : rowCount - 1
+      return
+    }
+    cursorIndex = clamp(cursorIndex + dy, 0, rowCount - 1)
+  }
+
+  function selectedRow() {
+    var i = cursorIndex
+    if (!cursorActive || i < 0 || i >= rowCount) return null
+    if (i < todosOffset) return { kind: "entry", data: store.agentInbox[i - inboxOffset] }
+    if (i < entriesOffset) return { kind: "entry", data: store.openTodos[i - todosOffset] }
+    if (i < prsOffset) return { kind: "entry", data: store.entries[i - entriesOffset] }
+    return { kind: "pr", data: store.prs[i - prsOffset] }
+  }
+
+  function selectedUrl() {
+    var row = selectedRow()
+    if (!row || !row.data) return ""
+    if (row.kind === "pr") return String(row.data.url || "")
+    return row.data.pr ? String(row.data.pr.url || "") : ""
+  }
+
+  function openUrl(url) {
+    if (String(url) === "") return
+    Quickshell.execDetached(["xdg-open", String(url)])
+    root.close()
+  }
+
+  // Enter/Space: open the selected PR in the browser (a PR row, or an entry
+  // that references one). With no cursor, activate falls back to refresh.
+  function activateSelected() {
+    if (!cursorActive) {
+      store.refresh()
+      return
+    }
+    openUrl(selectedUrl())
+  }
+
+  // d / x: close the selected todo — dismissing an inbox proposal or
+  // finishing one of your own. Only open todos respond; everything else
+  // is a record, not an obligation (there is nothing to "do" to it).
+  function dismissSelected() {
+    var row = selectedRow()
+    if (!row || row.kind !== "entry" || !row.data) return
+    var e = row.data
+    if (String(e.type) !== "todo" || e.done === true) return
+    store.markDone(String(e.id))
+  }
+
+  // Keep the cursor's row inside the viewport as it walks.
+  function ensureVisible(item) {
+    if (!panelFlick || !item) return
+    var y = item.mapToItem(column, 0, 0).y
+    var pad = Style.space(28)
+    if (y < panelFlick.contentY + pad)
+      panelFlick.contentY = Math.max(0, y - pad)
+    else if (y + item.height > panelFlick.contentY + panelFlick.height - pad)
+      panelFlick.contentY = Math.min(Math.max(0, panelFlick.contentHeight - panelFlick.height),
+                                     y + item.height - panelFlick.height + pad)
+  }
+
   readonly property bool prFailing: {
     for (var i = 0; i < store.prs.length; i++) {
       if (String(store.prs[i].checks) === "failing") return true
@@ -80,8 +162,9 @@ Panel {
 
   function footerText() {
     if (store.polling) return "Polling GitHub…"
-    if (store.updatedMs <= 0) return "r refresh · p poll gh"
-    return "Updated " + Qt.formatTime(new Date(store.updatedMs), "HH:mm") + " · r refresh · p poll gh"
+    var hints = "↑↓ · ⏎ open · d done · r refresh · p poll"
+    if (store.updatedMs <= 0) return hints
+    return "Updated " + Qt.formatTime(new Date(store.updatedMs), "HH:mm") + " · " + hints
   }
 
   visible: true
@@ -90,6 +173,8 @@ Panel {
 
   onOpenedChanged: if (opened) {
     nowMs = Date.now()
+    cursorActive = false
+    cursorIndex = -1
     if (panelFlick) panelFlick.contentY = 0
     store.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -148,16 +233,17 @@ Panel {
       anchors.fill: parent
 
       onMoveRequested: function(dx, dy) {
-        if (dy !== 0)
-          panelFlick.contentY = root.clamp(panelFlick.contentY + dy * Style.space(56), 0,
-                                           Math.max(0, panelFlick.contentHeight - panelFlick.height))
+        if (dy !== 0) root.moveCursor(dy)
       }
-      onActivateRequested: store.refresh()
+      onActivateRequested: root.activateSelected()
+      onDeleteRequested: root.dismissSelected()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "r" || t === "R") store.refresh()
         else if (t === "p" || t === "P") store.pollNow()
+        else if (t === "o" || t === "O") root.activateSelected()
+        else if (t === "d" || t === "D") root.dismissSelected()
       }
 
       Flickable {
@@ -226,9 +312,11 @@ Panel {
 
               EntryRow {
                 required property var modelData
+                required property int index
                 width: parent.width
                 entry: modelData
                 accent: true
+                rowIndex: root.inboxOffset + index
               }
             }
           }
@@ -251,8 +339,10 @@ Panel {
 
               EntryRow {
                 required property var modelData
+                required property int index
                 width: parent.width
                 entry: modelData
+                rowIndex: root.todosOffset + index
               }
             }
           }
@@ -280,9 +370,11 @@ Panel {
 
               EntryRow {
                 required property var modelData
+                required property int index
                 width: parent.width
                 entry: modelData
                 showTime: true
+                rowIndex: root.entriesOffset + index
               }
             }
           }
@@ -320,8 +412,10 @@ Panel {
 
               PRRow {
                 required property var modelData
+                required property int index
                 width: parent.width
                 pr: modelData
+                rowIndex: root.prsOffset + index
               }
             }
           }
@@ -348,11 +442,23 @@ Panel {
     property var entry: null
     property bool showTime: false
     property bool accent: false
+    property int rowIndex: -1
 
     readonly property var pr: entry && entry.pr ? entry.pr : null
     readonly property bool prAlarming: pr !== null && String(pr.checks) === "failing"
+    readonly property bool selected: root.cursorActive && root.cursorIndex === rowIndex
+    readonly property string url: pr ? String(pr.url || "") : ""
+
+    onSelectedChanged: if (selected) root.ensureVisible(entryRow)
 
     implicitHeight: Math.max(entryText.implicitHeight, entrySource.implicitHeight) + Style.spacing.sm
+
+    Rectangle {
+      visible: entryRow.selected
+      anchors.fill: parent
+      radius: Style.cornerRadius
+      color: root.alpha(root.foreground, 0.12)
+    }
 
     Text {
       id: entryTime
@@ -401,7 +507,13 @@ Panel {
       id: entryHover
       anchors.fill: parent
       hoverEnabled: true
-      acceptedButtons: Qt.NoButton
+      acceptedButtons: Qt.LeftButton
+      cursorShape: entryRow.url !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: {
+        root.cursorActive = true
+        root.cursorIndex = entryRow.rowIndex
+        root.openUrl(entryRow.url)
+      }
     }
 
     PanelToolTip {
@@ -416,11 +528,22 @@ Panel {
   component PRRow: Item {
     id: prRow
     property var pr: null
+    property int rowIndex: -1
 
     readonly property bool alarming: pr !== null
       && (String(pr.checks) === "failing" || String(pr.review) === "changes_requested")
+    readonly property bool selected: root.cursorActive && root.cursorIndex === rowIndex
+
+    onSelectedChanged: if (selected) root.ensureVisible(prRow)
 
     implicitHeight: prTitle.implicitHeight + prStatus.implicitHeight + Style.spacing.sm
+
+    Rectangle {
+      visible: prRow.selected
+      anchors.fill: parent
+      radius: Style.cornerRadius
+      color: root.alpha(root.foreground, 0.12)
+    }
 
     Text {
       id: prTitle
@@ -448,7 +571,13 @@ Panel {
       id: prHover
       anchors.fill: parent
       hoverEnabled: true
-      acceptedButtons: Qt.NoButton
+      acceptedButtons: Qt.LeftButton
+      cursorShape: Qt.PointingHandCursor
+      onClicked: {
+        root.cursorActive = true
+        root.cursorIndex = prRow.rowIndex
+        root.openUrl(prRow.pr ? String(prRow.pr.url || "") : "")
+      }
     }
 
     PanelToolTip {

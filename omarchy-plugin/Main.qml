@@ -113,4 +113,24 @@ Item {
       onStreamFinished: if (text.trim() !== "") console.warn("daylog poll", text.trim())
     }
   }
+
+  // Close a todo through the same single write path everything else uses.
+  // The full ULID is passed, so the CLI's prefix match is exact — the widget
+  // never resolves fuzzily on the user's behalf.
+  function markDone(id) {
+    if (doneProcess.running || String(id) === "") return
+    doneProcess.command = [daylogPath, "done", String(id)]
+    doneProcess.running = true
+  }
+
+  Process {
+    id: doneProcess
+    running: false
+    onExited: root.refresh()
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim() !== "") console.warn("daylog done", text.trim())
+    }
+  }
 }

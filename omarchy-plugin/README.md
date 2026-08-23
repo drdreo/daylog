@@ -20,7 +20,24 @@ is replaceable in an afternoon.
 - **Today** — the day's entries with time, source, and live PR status on
   entries that reference a PR. Closed todos are struck through.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
-- **Keys** — `r` refresh, `p` poll GitHub, arrows scroll, `Esc` closes.
+
+## Keyboard
+
+The panel is fully keyboard-driven, one flat cursor over every row
+(inbox → todos → today → PRs):
+
+| Key | Action |
+|---|---|
+| `↑`/`↓` or `k`/`j` | Move the cursor |
+| `Enter` / `Space` / `o` | Open the selected PR in the browser (PR rows, or entries referencing one) |
+| `d` / `x` | Close the selected todo (`daylog done <id>` — dismisses an inbox proposal or finishes your own) |
+| `r` | Refresh |
+| `p` | Run `daylog poll gh` |
+| `Tab` | Switch to the neighboring bar panel |
+| `Esc` | Close |
+
+Rows are also clickable: clicking a PR (or an entry that references one)
+opens it in the browser.
 
 ## Install
 
