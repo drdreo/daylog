@@ -1,6 +1,6 @@
 # Daylog — Architecture Document
 
-**Status:** Draft v1 · **Date:** 2026-08-23
+**Status:** v1.1 (Phase 1 implemented) · **Date:** 2026-08-23
 **Problem:** A single developer runs multiple independent coding agents (Claude Code, Codex, pi) across multiple machines. Work fragments into parallel sessions, side quests, and ~16 open PRs. There is no single place that answers "what actually happened today, and what needs me?"
 
 ---
@@ -37,8 +37,8 @@ Explicit non-goals: Daylog does not orchestrate, schedule, or manage agents (the
         └───────────────────────┬──────────────────────────┘
                                 ▼
         ┌──────────────────────────────────────────────────┐
-        │  Event store: ~/.daylog/events/YYYY-MM-DD.jsonl  │
-        │  Sidecar snapshots: ~/.daylog/state/*.json       │
+        │  Event store: <data>/events/YYYY-MM-DD.jsonl     │
+        │  Sidecar snapshots: <data>/state/*.json          │
         └───────────────────────┬──────────────────────────┘
                     (sync layer replicates events            
                      between machines, §8)                   
@@ -50,6 +50,8 @@ Explicit non-goals: Daylog does not orchestrate, schedule, or manage agents (the
                ▼                ▼                  ▼
         Omarchy widget    `daylog today`    EOD summarizer
 ```
+
+`<data>` is the platform's per-user data directory — `$XDG_DATA_HOME/daylog` (Linux, default `~/.local/share/daylog`), `~/Library/Application Support/daylog` (macOS), `%AppData%\daylog` (Windows) — overridable with `$DAYLOG_DIR`, so the layout is cross-platform by construction.
 
 ## 4. Data model
 
@@ -84,7 +86,7 @@ Refs are URIs with a scheme, not bare strings: `gh:pr:owner/repo#142`, `linear:A
 
 ### 4.4 Snapshots
 
-Pollers maintain sidecar files under `~/.daylog/state/` — `gh-prs.json`, later `linear-issues.json` — each an atomic-rename-replaced document containing the current truth for its domain plus a `fetched_at` timestamp. Snapshots are per-machine caches of external state: they are *not* synced (each machine can poll for itself, or one machine's staleness marker makes the situation honest), and they are *not* events. The event store holds the narrative; snapshots hold the now.
+Pollers maintain sidecar files under `<data>/state/` — `gh-prs.json`, later `linear-issues.json` — each an atomic-rename-replaced document containing the current truth for its domain plus a `fetched_at` timestamp. Snapshots are per-machine caches of external state: they are *not* synced (each machine can poll for itself, or one machine's staleness marker makes the situation honest), and they are *not* events. The event store holds the narrative; snapshots hold the now.
 
 ## 5. The write path: `daylog` CLI
 
@@ -127,7 +129,7 @@ the human to review:
 - Todos go to the human's review queue. Do not act on them, track them,
   or file them for yourself — filing one ends your involvement with it.
 - No thinking-out-loud or observations: only concrete actions.
-- One entry per completed task. Never write to ~/.daylog files directly.
+- One entry per completed task. Never write to daylog's data files directly.
 ```
 
 The `note` type remains in the schema for human quick-capture and the EOD summarizer, but is intentionally excluded from the agent vocabulary to keep agent noise out of the log. Where a harness supports deterministic hooks (Claude Code's Stop hook), a backstop checks that a task entry was logged and reminds the agent if not — reminding rather than auto-generating, because an auto-generated TLDR ("edited 3 files") defeats the purpose of delegating the summarization.
@@ -142,7 +144,7 @@ Agent-filed todos are proposals, not commitments: the `today` view renders `sour
 
 **The human** logs via the same CLI (`daylog add "lunch idea: cache the embeddings"`), and later via Slack (§7.2). Reclassification and todo-closure are human-only operations in practice, though nothing enforces that.
 
-**Pollers** follow one shared pattern, established by the GitHub poller and reused by every future integration: a systemd user timer fires `daylog poll <name>`; the poller fetches current state from the external API; writes the snapshot atomically; diffs against the previous snapshot; and emits `transition` events *only for meaningful changes* (PR merged, checks flipped red/green, review decision changed, issue moved column, issue assigned to you). Two invariants: a failed or partial fetch must skip the diff entirely rather than fabricate transitions, and a poller with no network exits 0 and leaves the old snapshot with its honest `fetched_at`. New integrations are new pollers; the core never changes.
+**Pollers** follow one shared pattern, established by the GitHub poller and reused by every future integration: a systemd user timer fires `daylog poll <name>`; the poller fetches current state from the external API; writes the snapshot atomically; diffs against the previous snapshot; and emits `transition` events *only for meaningful changes* (PR merged, checks flipped red/green, review decision changed, issue moved column, issue assigned to you). Two invariants: a failed or partial fetch must skip the diff entirely rather than fabricate transitions, and a poller with no network exits 0 and leaves the old snapshot with its honest `fetched_at`. New integrations are new pollers; the core never changes. Pollers shell out to the provider's own CLI where one exists (`gh api` for GitHub) rather than speaking HTTP natively: auth comes for free from the tool the machine already uses, and the failure modes stay honest — `gh` absent or unauthenticated means skip the diff and keep the stale snapshot. The daylog binary itself stays dependency-free for everything except polling.
 
 ## 7. Planned integrations
 
@@ -162,13 +164,13 @@ A scheduled agent invocation (any of the three agents can do it) that reads `day
 
 The append-only, immutable-event design was chosen partly because it makes sync nearly trivial. Since events are never edited, never deleted, and carry globally unique ULIDs, **merging two machines' logs is a set union**: collect all events for a day from all machines, dedupe by `id`, sort by ULID. There are no conflicts by construction — the classic sync problem (two machines edited the same thing) cannot occur, because nothing is ever edited. Two machines *reclassifying* the same entry produces two `reclassify` events, and the fold resolves it deterministically (last ULID wins), with both opinions preserved in history.
 
-The layout supports this directly: events are stored per-day *and per-host* during sync (`events/2026-08-23.arch-desktop.jsonl`), so no two machines ever write the same file, and a merged read is just "concatenate all files for the date." Derived state and rendered markdown are never synced — each machine recomputes them locally. Snapshots are never synced either (§4.4).
+Events are stored in a single per-day file (`events/2026-08-23.jsonl`) — one source of truth per day; the originating machine is recorded in-band by each event's `host` field, not in the filename. Two machines writing the same day therefore produce diverging copies of one file, and `daylog sync` resolves that with the same union: concatenate both versions, dedupe by `id`, sort by ULID, rewrite (with git as the transport, a `union`-style merge driver amounts to the same thing). Derived state and rendered markdown are never synced — each machine recomputes them locally. Snapshots are never synced either (§4.4).
 
 Three transport options, in recommended order:
 
-**Git (recommended start).** `~/.daylog/events` is a git repo; `daylog sync` commits and pushes/pulls against a private remote (GitHub private repo, or self-hosted). Per-host filenames mean pulls never conflict. This costs nothing, gives free history/backup/audit, works through any firewall you already work through, and is inspectable with tools you already know. Its only weakness is latency — sync happens when triggered (post-add hook, timer, or manual), not instantly.
+**Git (recommended start).** `<data>/events` is a git repo; `daylog sync` commits and pushes/pulls against a private remote (GitHub private repo, or self-hosted). Same-day writes from two machines merge by the id-union rule above, configured once as a git merge driver. This costs nothing, gives free history/backup/audit, works through any firewall you already work through, and is inspectable with tools you already know. Its only weakness is latency — sync happens when triggered (post-add hook, timer, or manual), not instantly.
 
-**Syncthing.** Continuous peer-to-peer replication of the events directory, no cloud party involved. Good fit if the machines are often on the same network and you want near-real-time cross-desktop views. Slightly riskier around partial-file propagation; mitigated by per-host files and line-oriented parsing that skips a torn final line.
+**Syncthing.** Continuous peer-to-peer replication of the events directory, no cloud party involved. Good fit if the machines are often on the same network and you want near-real-time cross-desktop views. Slightly riskier around partial-file propagation; mitigated by line-oriented parsing that skips a torn final line (though with a shared per-day file, Syncthing's last-writer-wins conflict copies need the same id-union reconciliation).
 
 **Object storage (S3/R2).** Each host pushes its own day-files to a bucket; readers pull all hosts' files. Cleanest for a future phone/web consumer, but introduces credentials and a cloud dependency for what is otherwise a local-first system. Defer until an actual remote consumer exists.
 
@@ -190,7 +192,7 @@ Phase 1 — the spine: event schema, `daylog add/today/render`, agent instructio
 
 Phase 2 — GitHub poller: snapshot + diff + transitions, systemd user timer, ref-join in the `today` view. This is where the "16 PRs" problem is actually solved.
 
-Phase 3 — sync: git transport, per-host files, `daylog sync` with a timer and/or post-add hook. Second machine joins.
+Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins.
 
 Phase 4 — surfaces: Omarchy widget, EOD summarizer.
 
