@@ -86,11 +86,18 @@ func Markdown(d Day) string {
 
 func entryLine(e Entry) string {
 	var b strings.Builder
-	mark := " "
-	if e.Done {
-		mark = "x"
+	// Checkboxes are todo lifecycle UI, so only todos get one. Everything
+	// else (work, notes, transitions) is a record of something that already
+	// happened — logged on completion, never "waiting to be checked off".
+	prefix := "- "
+	if e.Type == event.TypeTodo {
+		mark := " "
+		if e.Done {
+			mark = "x"
+		}
+		prefix = fmt.Sprintf("- [%s] ", mark)
 	}
-	b.WriteString(fmt.Sprintf("- [%s] %s **%s** — %s", mark, clock(e.TS), e.Source, e.TLDR))
+	b.WriteString(fmt.Sprintf("%s%s **%s** — %s", prefix, clock(e.TS), e.Source, e.TLDR))
 	if len(e.Refs) > 0 {
 		b.WriteString(" (" + strings.Join(e.Refs, ", ") + ")")
 	}
