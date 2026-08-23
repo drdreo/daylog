@@ -5,7 +5,8 @@ Producers append immutable events through one CLI; the daily view is derived
 by folding over them. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full
 design; this build covers the spine (schema + `add`/`done`/`reclassify`/
 `today`/`render`), the GitHub poller with the PR snapshot join in the day
-view, and the bar widgets (Omarchy on Linux, SwiftBar on macOS).
+view, and the bar widgets (Omarchy on Linux, SwiftBar on macOS, a tray
+widget on Windows 11).
 (Multi-machine sync — Phase 3 — is deliberately deferred.)
 
 ## Install
@@ -23,6 +24,10 @@ it's a single static binary, works on Linux, macOS, and Windows:
 ```sh
 go build -o daylog .          # or: go install github.com/drdreo/daylog@latest
 ```
+
+On Windows, install the CLI as above, then add the tray widget with
+`windows-plugin\install.ps1` (details in
+[windows-plugin/README.md](windows-plugin/README.md)).
 
 ## Usage
 
@@ -114,9 +119,9 @@ schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.e
 
 ## The bar widgets
 
-Two thin surfaces over the same contract — an icon that lights up when
+Three thin surfaces over the same contract — an icon that lights up when
 something needs you (untriaged agent todos, failing PR checks) and a
-panel/menu with the whole day: entries, todos, inbox, and open PRs. Both
+panel/menu with the whole day: entries, todos, inbox, and open PRs. All
 read only `daylog today --json`, exactly as the architecture prescribes for
 consumers.
 
@@ -127,6 +132,10 @@ consumers.
   for [SwiftBar](https://swiftbar.app) (xbar-compatible), a single
   dependency-free JXA script. Install with `./install.sh --swiftbar`;
   details in [swiftbar-plugin/README.md](swiftbar-plugin/README.md).
+- **Windows 11** — [`windows-plugin/`](windows-plugin/) is a system tray
+  widget, a single dependency-free PowerShell script (WinForms — nothing
+  beyond what Windows ships). Install with `windows-plugin\install.ps1`;
+  details in [windows-plugin/README.md](windows-plugin/README.md).
 
 ## Producer identity
 
