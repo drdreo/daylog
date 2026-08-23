@@ -1,0 +1,10 @@
+# Runs one GitHub poll cycle. Copy to ~/.config/systemd/user/ alongside
+# the timer, adjust ExecStart if daylog lives elsewhere, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now daylog-poll-gh.timer
+[Unit]
+Description=daylog GitHub poller (snapshot + transitions)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/daylog poll gh

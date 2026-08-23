@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"github.com/drdreo/daylog/internal/event"
+	"github.com/drdreo/daylog/internal/snapshot"
 )
 
 // Entry is an event with fold results applied: Type is the effective type
-// after reclassification, Done reflects a closing `done` event.
+// after reclassification, Done reflects a closing `done` event, PR is the
+// snapshot join for entries referencing a pull request (nil when the
+// snapshot has nothing for them).
 type Entry struct {
 	ID           string         `json:"id"`
 	TS           string         `json:"ts"`
@@ -25,17 +28,22 @@ type Entry struct {
 	Done         bool           `json:"done"`
 	DoneNote     string         `json:"done_note,omitempty"`
 	Meta         map[string]any `json:"meta,omitempty"`
+	PR           *snapshot.PR   `json:"pr,omitempty"`
 }
 
 // Day is the folded view object emitted by `daylog today --json`.
 // open_todos and agent_inbox span all days — an obligation doesn't expire
-// at midnight; agent_inbox is the untriaged review queue (§5.2).
+// at midnight; agent_inbox is the untriaged review queue (§5.2). prs is
+// every open PR from the GitHub snapshot, honest about its age via
+// prs_fetched_at (empty when the poller has never run).
 type Day struct {
-	Date        string  `json:"date"`
-	GeneratedAt string  `json:"generated_at"`
-	Entries     []Entry `json:"entries"`
-	OpenTodos   []Entry `json:"open_todos"`
-	AgentInbox  []Entry `json:"agent_inbox"`
+	Date         string        `json:"date"`
+	GeneratedAt  string        `json:"generated_at"`
+	Entries      []Entry       `json:"entries"`
+	OpenTodos    []Entry       `json:"open_todos"`
+	AgentInbox   []Entry       `json:"agent_inbox"`
+	PRs          []snapshot.PR `json:"prs"`
+	PRsFetchedAt string        `json:"prs_fetched_at,omitempty"`
 }
 
 // Fold computes the Day view for `date` from the full event history.
@@ -73,6 +81,7 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 		Entries:     []Entry{},
 		OpenTodos:   []Entry{},
 		AgentInbox:  []Entry{},
+		PRs:         []snapshot.PR{},
 	}
 	for _, e := range all {
 		// done and reclassify are bookkeeping folded into their targets;

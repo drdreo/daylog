@@ -59,6 +59,16 @@ func Markdown(d Day) string {
 		}
 	}
 
+	if len(d.PRs) > 0 || d.PRsFetchedAt != "" {
+		fmt.Fprintf(&b, "\n## Open PRs%s\n\n", snapshotAge(d.PRsFetchedAt, d.GeneratedAt))
+		if len(d.PRs) == 0 {
+			b.WriteString("_None._\n")
+		}
+		for _, pr := range d.PRs {
+			fmt.Fprintf(&b, "- **%s#%d** %s — %s\n", pr.Repo, pr.Number, pr.Title, prStatusLabel(&pr))
+		}
+	}
+
 	if len(d.OpenTodos) > 0 {
 		b.WriteString("\n## Open todos\n\n")
 		for _, e := range d.OpenTodos {
@@ -84,6 +94,9 @@ func entryLine(e Entry) string {
 	if len(e.Refs) > 0 {
 		b.WriteString(" (" + strings.Join(e.Refs, ", ") + ")")
 	}
+	if e.PR != nil {
+		b.WriteString(fmt.Sprintf(" [%s]", prStatusLabel(e.PR)))
+	}
 	if e.OriginalType != "" {
 		b.WriteString(fmt.Sprintf(" _(was %s)_", e.OriginalType))
 	}
@@ -92,6 +105,21 @@ func entryLine(e Entry) string {
 	}
 	b.WriteString(fmt.Sprintf(" `%s`\n", event.ShortID(e.ID)))
 	return b.String()
+}
+
+// snapshotAge annotates the Open PRs heading with the snapshot's honest age
+// (§4.4): the fetch time normally, loudly marked stale once it is hours old —
+// a poller that stopped running must not masquerade as current truth.
+func snapshotAge(fetchedAt, generatedAt string) string {
+	f, err := time.Parse(time.RFC3339, fetchedAt)
+	if err != nil {
+		return ""
+	}
+	g, err := time.Parse(time.RFC3339, generatedAt)
+	if err == nil && g.Sub(f) > 2*time.Hour {
+		return fmt.Sprintf(" (STALE — fetched %s)", f.Local().Format("2006-01-02 15:04"))
+	}
+	return fmt.Sprintf(" (as of %s)", f.Local().Format("15:04"))
 }
 
 func clock(ts string) string {
