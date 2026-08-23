@@ -15,8 +15,9 @@
 // <xbar.dependencies>daylog</xbar.dependencies>
 // <xbar.abouturl>https://github.com/drdreo/daylog</xbar.abouturl>
 // <xbar.var>string(DAYLOG_PATH=""): Absolute path to the daylog CLI (empty = search PATH).</xbar.var>
+// <xbar.var>string(DAYLOG_ICON="calendar.badge.checkmark"): SF Symbol for the calm menu bar state (SwiftBar only).</xbar.var>
 //
-// <swiftbar.environment>[DAYLOG_PATH=]</swiftbar.environment>
+// <swiftbar.environment>[DAYLOG_PATH=, DAYLOG_ICON=]</swiftbar.environment>
 // <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 // <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 
@@ -173,12 +174,14 @@ function render(day, ctx) {
   var lines = []
 
   // ---------- menu bar title: lights up when something needs you ----------
+  // The pair tells the story at a glance: a checked calendar when the day is
+  // triaged, flipping to a red exclamation (plus count) when it is not.
   if (ctx.error && day === null) {
     lines.push(line(':calendar.badge.exclamationmark:', { sfcolor: 'orange' }))
   } else if (attention > 0) {
     lines.push(line(':calendar.badge.exclamationmark: ' + attention, { sfcolor: 'red' }))
   } else {
-    lines.push(line(':calendar:'))
+    lines.push(line(':' + (ctx.icon || 'calendar.badge.checkmark') + ':'))
   }
   lines.push('---')
 
@@ -285,7 +288,7 @@ function findDaylog() {
 }
 
 function run() {
-  var ctx = { bin: findDaylog(), error: '', nowMs: Date.now() }
+  var ctx = { bin: findDaylog(), icon: envVar('DAYLOG_ICON'), error: '', nowMs: Date.now() }
   var day = null
   if (!ctx.bin) {
     ctx.error = 'daylog CLI not found — install it (install.sh) or set DAYLOG_PATH in this plugin’s settings'

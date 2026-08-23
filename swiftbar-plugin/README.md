@@ -14,9 +14,10 @@ ships — no python, no jq.
 
 ## What it shows
 
-- **Menu bar icon** — a calendar that grows a red exclamation badge (plus a
-  count) when something needs you: untriaged agent todos in the inbox, or an
-  open PR with failing checks.
+- **Menu bar icon** — a checked calendar (`calendar.badge.checkmark`) while
+  the day is triaged, flipping to a red exclamation badge plus a count
+  (`calendar.badge.exclamationmark`) when something needs you: untriaged
+  agent todos in the inbox, or an open PR with failing checks.
 - **Agent inbox** — todos filed by agents, awaiting your triage.
 - **Open todos** — your own open obligations, any day.
 - **Today** — the day's entries with time, source, and live PR status on
@@ -68,6 +69,7 @@ gracefully there).
 | Variable | Default | Meaning |
 |---|---|---|
 | `DAYLOG_PATH` | *(search PATH)* | Absolute path to the daylog CLI |
+| `DAYLOG_ICON` | `calendar.badge.checkmark` | SF Symbol name for the calm menu bar state (the attention state stays `calendar.badge.exclamationmark`) |
 
 Set it in SwiftBar's per-plugin settings (⌥-click the icon → Settings), or
 rely on the built-in search: the plugin looks on `PATH` plus the usual
