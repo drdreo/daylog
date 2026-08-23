@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/drdreo/daylog/internal/snapshot"
 	"github.com/drdreo/daylog/internal/store"
 	"github.com/drdreo/daylog/internal/view"
 )
@@ -66,7 +67,13 @@ func foldDay(date time.Time) (view.Day, error) {
 	if err != nil {
 		return view.Day{}, err
 	}
-	return view.Fold(all, date, time.Now()), nil
+	day := view.Fold(all, date, time.Now())
+	// The snapshot is a per-machine cache: unreadable or absent means the
+	// view simply renders without live PR state, never fails (§4.4).
+	if snap, err := snapshot.LoadGHPRs(); err == nil {
+		view.JoinGH(&day, snap)
+	}
+	return day, nil
 }
 
 func filterEntries(entries []view.Entry, types, sources []string) []view.Entry {

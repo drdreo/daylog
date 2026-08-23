@@ -1,6 +1,6 @@
 # Daylog — Architecture Document
 
-**Status:** v1.1 (Phase 1 implemented) · **Date:** 2026-08-23
+**Status:** v1.2 (Phases 1–2 implemented) · **Date:** 2026-08-23
 **Problem:** A single developer runs multiple independent coding agents (Claude Code, Codex, pi) across multiple machines. Work fragments into parallel sessions, side quests, and ~16 open PRs. There is no single place that answers "what actually happened today, and what needs me?"
 
 ---
