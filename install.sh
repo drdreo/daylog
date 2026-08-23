@@ -6,7 +6,8 @@
 #   ./install.sh --omarchy    also install + enable the Omarchy bar widget (Linux)
 #   ./install.sh --swiftbar   also install the SwiftBar menu bar widget (macOS)
 #
-# Works on Linux and macOS; on Windows use `go install .` instead.
+# Works on Linux and macOS; on Windows use `go install .` instead, plus
+# windows-plugin\install.ps1 for the tray widget.
 set -eu
 
 INSTALL_DIR="${DAYLOG_INSTALL_DIR:-$HOME/.local/bin}"
