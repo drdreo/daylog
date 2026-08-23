@@ -3,15 +3,17 @@
 A personal ledger of what every coding agent (and the human) did today.
 Producers append immutable events through one CLI; the daily view is derived
 by folding over them. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full
-design; this is the Phase 2 build (the spine — schema + `add`/`done`/
-`reclassify`/`today`/`render` — plus the GitHub poller and the PR
-snapshot join in the day view).
+design; this build covers the spine (schema + `add`/`done`/`reclassify`/
+`today`/`render`), the GitHub poller with the PR snapshot join in the day
+view, and the Omarchy bar widget. (Multi-machine sync — Phase 3 — is
+deliberately deferred.)
 
 ## Install
 
 ```sh
 ./install.sh                  # builds and installs to ~/.local/bin
 ./install.sh --timer          # …and enables the systemd poll timer (Linux)
+./install.sh --omarchy        # …and installs the Omarchy bar widget
 ```
 
 Override the destination with `DAYLOG_INSTALL_DIR`. Or do it by hand —
@@ -108,6 +110,16 @@ survive sleep/wake more gracefully.
 ```powershell
 schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.exe poll gh"
 ```
+
+## The Omarchy bar widget
+
+[`omarchy-plugin/`](omarchy-plugin/) is a bar widget for Omarchy 4's
+Quickshell desktop: an icon that lights up when something needs you
+(untriaged agent todos, failing PR checks) and a panel with the whole day —
+entries, todos, inbox, and open PRs. It reads only `daylog today --json`,
+exactly as the architecture prescribes for consumers. Install with
+`./install.sh --omarchy`; details in
+[omarchy-plugin/README.md](omarchy-plugin/README.md).
 
 ## Producer identity
 

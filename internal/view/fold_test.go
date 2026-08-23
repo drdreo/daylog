@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,35 @@ func TestReclassifiedTodoLeavesQueue(t *testing.T) {
 	day := Fold([]event.Event{todo, rec}, date("2026-08-23"), time.Now())
 	if len(day.AgentInbox) != 0 {
 		t.Errorf("reclassified todo should leave the inbox: %+v", day.AgentInbox)
+	}
+}
+
+func TestMarkdownCheckboxesOnlyOnTodos(t *testing.T) {
+	work := ev("2026-08-23", event.TypeWork, "agent:claude", "shipped the parser")
+	trans := ev("2026-08-23", event.TypeTransition, "poller:gh", "PR merged: fix auth")
+	openTodo := ev("2026-08-23", event.TypeTodo, "human:cli", "renew the cert")
+	closedTodo := ev("2026-08-23", event.TypeTodo, "agent:codex", "rotate the token")
+	done := ev("2026-08-23", event.TypeDone, "human:cli", "won't do")
+	done.Parent = &closedTodo.ID
+
+	md := Markdown(Fold([]event.Event{work, trans, openTodo, closedTodo, done}, date("2026-08-23"), time.Now()))
+
+	for _, want := range []string{"- [ ] ", "- [x] "} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	for _, line := range strings.Split(md, "\n") {
+		if strings.Contains(line, "shipped the parser") || strings.Contains(line, "PR merged") {
+			if strings.Contains(line, "[ ]") || strings.Contains(line, "[x]") {
+				t.Errorf("non-todo line has a checkbox: %s", line)
+			}
+		}
+		if strings.Contains(line, "renew the cert") && !strings.Contains(line, "- [ ]") {
+			t.Errorf("open todo missing empty checkbox: %s", line)
+		}
+		if strings.Contains(line, "rotate the token") && !strings.Contains(line, "- [x]") {
+			t.Errorf("closed todo missing checked box: %s", line)
+		}
 	}
 }
