@@ -29,6 +29,10 @@ var EXTRA_PATH = '$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/go/bin
 // the first). "Urgent" matches the Omarchy widget's meaning: needs you now.
 var DIM = '#6e6e73,#98989d'
 var URGENT = '#c4321e,#ff6b5e'
+// The default label color, stated outright rather than left to SwiftBar:
+// a line with no action is drawn disabled-grey, and a submenu parent has no
+// action of its own, so an actionable-looking row has to name its color.
+var TEXT = '#1d1d1f,#f5f5f7'
 
 // ---------------------------------------------------------------- rendering
 //
@@ -162,15 +166,28 @@ function entryText(e, withTime) {
 // One open-todo row. Untriaged agent proposals are marked in place (rather
 // than exiled to a second list) and get the accept/decline verdict pair;
 // everything else just gets the usual lifecycle actions.
+//
+// A todo with nothing to choose between IS its own done button: the action
+// rides on the row, so the checkbox behaves like one and the row renders
+// enabled. A row that owns a submenu cannot also fire its own action — the
+// click opens the submenu instead — so it names its color rather than
+// sitting there in disabled grey next to its actionable neighbours.
 function todoRow(e, ctx, lines, untriaged) {
   var pr = e.pr || null
   var alarming = pr !== null && String(pr.checks) === 'failing'
   var label = truncate(entryText(e, false), 70)
   if (untriaged) label = '● ' + label
-  lines.push(line(label, {
-    tooltip: untriaged ? 'Awaiting triage — ' + entryTooltip(e) : entryTooltip(e),
-    color: alarming ? URGENT : (untriaged ? URGENT : undefined),
-  }))
+  var tooltip = untriaged ? 'Awaiting triage — ' + entryTooltip(e) : entryTooltip(e)
+  var color = alarming || untriaged ? URGENT : TEXT
+  var hasSubmenu = untriaged || Boolean(pr && pr.url)
+
+  if (hasSubmenu) {
+    lines.push(line(label, { tooltip: tooltip, color: color }))
+  } else {
+    lines.push(line(label, daylogAction(ctx.bin, ['done', String(e.id)], {
+      tooltip: tooltip + ' — click to close', color: color,
+    })))
+  }
   if (untriaged) {
     // A click is the human ruling, so the identity is stated outright rather
     // than inherited from whatever $DAYLOG_SOURCE the widget was launched with.
@@ -178,7 +195,9 @@ function todoRow(e, ctx, lines, untriaged) {
     lines.push(line('-- Decline', daylogAction(ctx.bin, ['decline', String(e.id), '--source', 'human:widget'], { sfimage: 'xmark' })))
     lines.push(line('-----'))
   }
-  lines.push(line('-- Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
+  if (hasSubmenu) {
+    lines.push(line('-- Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
+  }
   if (pr && pr.url) {
     lines.push(line('-- Open ' + pr.repo + '#' + pr.number + ' — ' + prStatusLabel(pr), {
       href: String(pr.url), sfimage: 'arrow.up.right.square',
