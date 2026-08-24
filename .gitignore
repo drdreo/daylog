@@ -1,2 +1,4 @@
 daylog
 /dist/
+!skills/daylog/
+!skills/daylog/**

@@ -196,7 +196,7 @@ func TestRunGHFirstRunIsBaselineOnly(t *testing.T) {
 		"pr view 1 --repo a/b": viewJSON("OPEN", "failing", "CHANGES_REQUESTED"),
 	}, nil)
 
-	if err := RunGH(io.Discard, io.Discard, false, time.Now()); err != nil {
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := snapshot.LoadGHPRs()
@@ -229,7 +229,7 @@ func TestRunGHEmitsMergeTransition(t *testing.T) {
 		"pr view 1 --repo a/b": viewJSON("MERGED", "passing", "APPROVED"),
 	}, nil)
 
-	if err := RunGH(io.Discard, io.Discard, false, time.Now()); err != nil {
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	evs, err := store.ReadAll()
@@ -261,7 +261,7 @@ func TestRunGHFetchFailureKeepsSnapshotAndExitsZero(t *testing.T) {
 	}
 	stubGH(t, nil, map[string]error{"search prs": fmt.Errorf("no network")})
 
-	if err := RunGH(io.Discard, io.Discard, false, time.Now()); err != nil {
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatalf("no network must not be an error state, got %v", err)
 	}
 	snap, _ := snapshot.LoadGHPRs()
@@ -283,7 +283,7 @@ func TestRunGHPartialFetchFailureSkipsEverything(t *testing.T) {
 	stubGH(t, map[string]string{"search prs": `[]`},
 		map[string]error{"pr view": fmt.Errorf("api hiccup")})
 
-	if err := RunGH(io.Discard, io.Discard, false, time.Now()); err != nil {
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := snapshot.LoadGHPRs()
@@ -308,7 +308,7 @@ func TestRunGHDryRunWritesNothing(t *testing.T) {
 	}, nil)
 
 	var out strings.Builder
-	if err := RunGH(&out, io.Discard, true, time.Now()); err != nil {
+	if err := RunGH(&out, io.Discard, true, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "would log: PR merged") {
@@ -333,7 +333,7 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"u","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x"}`,
 	}, nil)
 	now, _ := time.Parse(time.RFC3339, "2026-08-23T12:00:00Z")
-	cur, err := fetchGHPRs(nil, now)
+	cur, _, err := fetchGHPRs(nil, now, ownerFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,5 +358,164 @@ func TestTransitionEventValidates(t *testing.T) {
 	}
 	if _, err := json.Marshal(e); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseOwnerFilter(t *testing.T) {
+	// \r included: an EnvironmentFile written with CRLF must not turn the
+	// whole poll into a hard error over an invisible character.
+	f, err := parseOwnerFilter(" LovableLabs, !oldorg\r  @me ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(f.include) != "[lovablelabs @me]" || fmt.Sprint(f.exclude) != "[oldorg]" {
+		t.Fatalf("filter = %+v", f)
+	}
+	if f.empty() {
+		t.Error("filter with entries reports empty")
+	}
+	if empty, _ := parseOwnerFilter(""); !empty.empty() {
+		t.Error("blank spec must mean unfiltered")
+	}
+	for _, bad := range []string{"has space/slash", "!", "org/repo", "bad_name"} {
+		if _, err := parseOwnerFilter(bad); err == nil {
+			t.Errorf("parseOwnerFilter(%q) accepted a malformed entry", bad)
+		}
+	}
+}
+
+func TestOwnerFilterAllows(t *testing.T) {
+	cases := []struct {
+		spec, repo string
+		want       bool
+	}{
+		{"", "any/repo", true},
+		{"lovablelabs", "lovablelabs/app", true},
+		{"lovablelabs", "LovableLabs/App", true}, // owners are case-insensitive
+		{"lovablelabs", "otherco/app", false},
+		{"lovablelabs,drdreo", "drdreo/daylog", true},
+		{"!otherco", "lovablelabs/app", true},
+		{"!otherco", "otherco/app", false},
+		{"lovablelabs,!lovablelabs", "lovablelabs/app", false}, // exclude wins
+	}
+	for _, c := range cases {
+		f, err := parseOwnerFilter(c.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.allows(c.repo); got != c.want {
+			t.Errorf("%q allows %q = %v, want %v", c.spec, c.repo, got, c.want)
+		}
+	}
+}
+
+func TestFetchNarrowsSearchAndDropsOutOfScopePRs(t *testing.T) {
+	tempDataDir(t)
+	var searched string
+	orig := ghRun
+	t.Cleanup(func() { ghRun = orig })
+	ghRun = func(args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "search prs"):
+			searched = joined
+			// The search is asked to narrow, but answer broadly anyway:
+			// the local filter must hold on its own.
+			return []byte(`[{"number":1,"repository":{"nameWithOwner":"work/app"}},
+				{"number":2,"repository":{"nameWithOwner":"personal/toy"}}]`), nil
+		case strings.HasPrefix(joined, "pr view 1 --repo work/app"):
+			return []byte(viewJSON("OPEN", "passing", "")), nil
+		}
+		return nil, fmt.Errorf("unexpected gh call: gh %s", joined)
+	}
+
+	filter, err := parseOwnerFilter("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A previously tracked PR from another owner must not be re-fetched.
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:personal/toy#9", Repo: "personal/toy",
+		Number: 9, State: "open"})
+	cur, _, err := fetchGHPRs(prev, time.Now(), filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(searched, "--owner=work") {
+		t.Errorf("search args = %q, want a server-side --owner narrowing", searched)
+	}
+	if len(cur.PRs) != 1 || cur.PRs["gh:pr:work/app#1"].State != "open" {
+		t.Fatalf("snapshot = %+v, want only the in-scope PR", cur.PRs)
+	}
+}
+
+func TestFetchResolvesSelfToken(t *testing.T) {
+	tempDataDir(t)
+	stubGH(t, map[string]string{
+		"api user":                       "drdreo\n",
+		"search prs":                     `[{"number":1,"repository":{"nameWithOwner":"drdreo/daylog"}}]`,
+		"pr view 1 --repo drdreo/daylog": viewJSON("OPEN", "passing", ""),
+	}, nil)
+
+	filter, err := parseOwnerFilter("@me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, _, err := fetchGHPRs(nil, time.Now(), filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cur.PRs["gh:pr:drdreo/daylog#1"]; !ok {
+		t.Fatalf("snapshot = %+v, want the authenticated user's PR", cur.PRs)
+	}
+}
+
+func TestRunGHRejectsMalformedFilterBeforeTouchingDisk(t *testing.T) {
+	tempDataDir(t)
+	stubGH(t, nil, nil) // any gh call would fail the test as unexpected
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), "not_a_login"); err == nil {
+		t.Fatal("a malformed owner filter must be an error, not a silent empty poll")
+	}
+	if snap, _ := snapshot.LoadGHPRs(); snap != nil {
+		t.Fatal("rejected config wrote a snapshot")
+	}
+}
+
+func TestRunGHOutOfScopePRIsNotNarratedAsClosed(t *testing.T) {
+	tempDataDir(t)
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:otherco/app#1", Repo: "otherco/app",
+		Number: 1, Title: "Fix races", State: "open", Checks: "passing"})
+	if err := snapshot.SaveGHPRs(prev); err != nil {
+		t.Fatal(err)
+	}
+	stubGH(t, map[string]string{"search prs": `[]`}, nil)
+
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := store.ReadAll(); len(evs) != 0 {
+		t.Fatalf("narrowing the filter fabricated %d transitions", len(evs))
+	}
+	snap, _ := snapshot.LoadGHPRs()
+	if len(snap.PRs) != 0 {
+		t.Fatalf("snapshot = %+v, want the out-of-scope PR dropped", snap.PRs)
+	}
+}
+
+func TestRunGHSummaryReportsResolvedSelf(t *testing.T) {
+	tempDataDir(t)
+	stubGH(t, map[string]string{
+		"api user":                       "drdreo\n",
+		"search prs":                     `[{"number":1,"repository":{"nameWithOwner":"drdreo/daylog"}}]`,
+		"pr view 1 --repo drdreo/daylog": viewJSON("OPEN", "passing", ""),
+	}, nil)
+
+	var out strings.Builder
+	if err := RunGH(&out, io.Discard, false, time.Now(), "@me"); err != nil {
+		t.Fatal(err)
+	}
+	// The scope line is where a user checks which account gh actually used
+	// (say, after `gh auth switch`), so it must show the login, not the token.
+	if !strings.Contains(out.String(), "owners: drdreo") {
+		t.Fatalf("summary = %q, want the resolved login", out.String())
 	}
 }

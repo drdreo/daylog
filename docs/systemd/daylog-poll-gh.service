@@ -7,4 +7,6 @@ Description=daylog GitHub poller (snapshot + transitions)
 
 [Service]
 Type=oneshot
+# Scope the poll to certain repo owners on this machine (see README):
+#   Environment=DAYLOG_GH_OWNERS=myorg
 ExecStart=%h/.local/bin/daylog poll gh

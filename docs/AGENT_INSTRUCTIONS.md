@@ -9,6 +9,10 @@ wrapper sets `DAYLOG_SOURCE=agent:<name>` once (e.g. in a shell alias or
 wrapper script), so `source` is correct by construction rather than by
 agent self-report.
 
+For skill-aware Codex and Claude Code installations, the same workflow is
+packaged in [`../skills/daylog/SKILL.md`](../skills/daylog/SKILL.md). Run
+`./install.sh --skills` to install it in both global skill directories.
+
 ---
 
 ```markdown

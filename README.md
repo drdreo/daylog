@@ -16,6 +16,7 @@ widget on Windows 11).
 ./install.sh --timer          # …and enables the systemd poll timer (Linux)
 ./install.sh --omarchy        # …and installs the Omarchy bar widget (Linux)
 ./install.sh --swiftbar       # …and installs the SwiftBar menu bar widget (macOS)
+./install.sh --skills         # …and installs the agent skill for Codex + Claude Code
 ```
 
 Override the destination with `DAYLOG_INSTALL_DIR`. Or do it by hand —
@@ -46,6 +47,7 @@ daylog render 2026-08-20        # any past day
 
 daylog poll gh                  # one GitHub poll cycle (see below)
 daylog poll gh --dry-run        # show transitions without writing anything
+daylog poll gh --owner myorg    # …only PRs under a given owner
 ```
 
 `done` and `reclassify` take a unique ULID prefix (shown as the trailing
@@ -63,7 +65,8 @@ One JSONL file per day, readable with `cat` and `jq`:
 | Windows | `%AppData%\daylog` |
 
 Override with `DAYLOG_DIR`. Events land in `events/YYYY-MM-DD.jsonl`;
-poller snapshots land in `state/` (per-machine caches, never synced).
+poller snapshots land in `state/` (per-machine caches, never synced), and
+optional per-machine settings in `config.json`.
 
 ## The GitHub poller
 
@@ -80,6 +83,44 @@ anything. Each cycle:
    `source: poller:gh` for the changes worth narrating: **PR merged**,
    **closed without merge**, **checks flipped red/green**, and **review
    decisions** (approved / changes requested).
+
+### Scoping the poll to one owner
+
+One machine is rarely one context — a work laptop wants only the work org's
+PRs, a home machine only the ones under your own account. `--owner` narrows
+the poll (repeatable, or a comma-separated list), `$DAYLOG_GH_OWNERS` sets
+the same thing for a shell, and a `gh_owners` key in `<data>/config.json`
+sets it for the machine. The flag wins, then the env var, then the file.
+A leading `!` excludes an owner, and `@me` stands for your authenticated
+account:
+
+```sh
+daylog poll gh --owner lovablelabs        # only the work org
+daylog poll gh --owner @me                # only your personal repos
+daylog poll gh --owner "!oldorg"          # everything except that one
+export DAYLOG_GH_OWNERS=lovablelabs       # this shell's default
+```
+
+For a setting that sticks, write it to `<data>/config.json` (the same data
+dir as the table above, so it is per-machine and never synced):
+
+```json
+{
+  "gh_owners": "lovablelabs"
+}
+```
+
+`gh_owners` also accepts a list (`["lovablelabs", "!oldorg"]`). Prefer the
+file over a shell export for anything scheduled or clicked: a widget button
+or a launchd/Task Scheduler job inherits neither your shell profile nor its
+exports, so an env-only filter silently doesn't apply there. A missing file
+is fine; a malformed one or an unknown key is a loud error, because a
+setting that quietly does nothing is the worst kind.
+
+Owners are matched case-insensitively, excludes beat includes, and no
+filter means every PR you author — the original behaviour. PRs outside the
+filter simply stop being tracked; falling out of scope is never narrated as
+a close.
 
 The first run only establishes a baseline. Nothing is logged for a PR
 merely appearing (opening it was your own action, already narrated) or for
@@ -144,6 +185,22 @@ Every event carries a `source`. It resolves from `--source`, then
 wrapper sets `DAYLOG_SOURCE=agent:<name>` once, so identity is correct by
 construction. The instruction block to paste into agent configs is in
 [docs/AGENT_INSTRUCTIONS.md](docs/AGENT_INSTRUCTIONS.md).
+
+## Agent skill
+
+[`skills/daylog/SKILL.md`](skills/daylog/SKILL.md) packages the work-logging
+instructions for skill-aware agents. Install it globally for both Codex and
+Claude Code with:
+
+```sh
+./install.sh --skills
+```
+
+This copies the skill to `~/.agents/skills/daylog` and
+`~/.claude/skills/daylog`. Override those roots with
+`DAYLOG_AGENTS_SKILLS_DIR` and `DAYLOG_CLAUDE_SKILLS_DIR` when needed. The
+agent harness should still set `DAYLOG_SOURCE=agent:<name>` so entries carry
+the correct producer identity.
 
 ## The JSON contract
 

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/drdreo/daylog/internal/event"
 	"github.com/drdreo/daylog/internal/snapshot"
@@ -48,6 +49,133 @@ func firstLine(s string) string {
 	return s
 }
 
+// ownerFilter narrows the poller to certain repository owners (§6). One
+// machine is rarely one context: a work laptop wants only `lovablelabs`
+// PRs, a home machine only the ones under the user's own account. Entries
+// are logins, case-insensitive; a leading `!` excludes instead of includes;
+// `@me` stands for the authenticated user, so the same spec is portable.
+// An empty filter tracks every owner — the original behaviour.
+type ownerFilter struct {
+	include []string // lowercased logins; empty means "any owner not excluded"
+	exclude []string
+}
+
+const selfToken = "@me"
+
+// parseOwnerFilter reads the spec from --owner / $DAYLOG_GH_OWNERS:
+// entries separated by commas or whitespace, e.g. "lovablelabs, !oldorg".
+// A malformed entry is an error rather than a silent no-match — a typo that
+// quietly tracked nothing would look exactly like a quiet day.
+func parseOwnerFilter(spec string) (ownerFilter, error) {
+	var f ownerFilter
+	for _, raw := range strings.FieldsFunc(spec, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		entry := raw
+		negated := strings.HasPrefix(entry, "!")
+		entry = strings.ToLower(strings.TrimPrefix(entry, "!"))
+		if err := validOwner(entry); err != nil {
+			return ownerFilter{}, fmt.Errorf("owner filter %q: %w", raw, err)
+		}
+		if negated {
+			f.exclude = append(f.exclude, entry)
+		} else {
+			f.include = append(f.include, entry)
+		}
+	}
+	return f, nil
+}
+
+// validOwner accepts a GitHub login (alphanumerics and hyphens) or @me.
+func validOwner(s string) error {
+	if s == selfToken {
+		return nil
+	}
+	if s == "" {
+		return errors.New("empty owner")
+	}
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			continue
+		}
+		return errors.New("not a github owner login (letters, digits, hyphens, or @me)")
+	}
+	return nil
+}
+
+func (f ownerFilter) empty() bool { return len(f.include) == 0 && len(f.exclude) == 0 }
+
+// allows reports whether a repo ("owner/name") is in scope. Excludes win over
+// includes; with no includes, everything not excluded is in scope.
+func (f ownerFilter) allows(repo string) bool {
+	owner := strings.ToLower(repo)
+	if i := strings.Index(owner, "/"); i >= 0 {
+		owner = owner[:i]
+	}
+	for _, e := range f.exclude {
+		if e == owner {
+			return false
+		}
+	}
+	if len(f.include) == 0 {
+		return true
+	}
+	for _, i := range f.include {
+		if i == owner {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSelf expands the @me token to the authenticated login. Costs one
+// extra gh call, and only when the spec actually uses the token.
+func (f ownerFilter) resolveSelf() (ownerFilter, error) {
+	if !f.usesSelf() {
+		return f, nil
+	}
+	out, err := ghRun("api", "user", "--jq", ".login")
+	if err != nil {
+		return ownerFilter{}, err
+	}
+	login := strings.ToLower(strings.TrimSpace(string(out)))
+	if err := validOwner(login); err != nil || login == selfToken {
+		return ownerFilter{}, fmt.Errorf("resolve %s: gh returned %q", selfToken, strings.TrimSpace(string(out)))
+	}
+	swap := func(list []string) []string {
+		out := make([]string, len(list))
+		for i, o := range list {
+			if o == selfToken {
+				o = login
+			}
+			out[i] = o
+		}
+		return out
+	}
+	return ownerFilter{include: swap(f.include), exclude: swap(f.exclude)}, nil
+}
+
+func (f ownerFilter) usesSelf() bool {
+	for _, list := range [][]string{f.include, f.exclude} {
+		for _, o := range list {
+			if o == selfToken {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// String describes the filter for the poll summary line.
+func (f ownerFilter) String() string {
+	var parts []string
+	parts = append(parts, f.include...)
+	for _, e := range f.exclude {
+		parts = append(parts, "!"+e)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Transition is one meaningful change observed between two snapshots.
 type Transition struct {
 	Ref  string
@@ -57,8 +185,14 @@ type Transition struct {
 }
 
 // RunGH performs one poll cycle: fetch, diff, emit, save. It is the body of
-// `daylog poll gh` and of the systemd timer unit.
-func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time) error {
+// `daylog poll gh` and of the systemd timer unit. ownerSpec narrows which
+// repository owners are tracked (see ownerFilter); empty means all.
+func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec string) error {
+	filter, err := parseOwnerFilter(ownerSpec)
+	if err != nil {
+		return err // a misconfigured filter is the caller's bug, not a skip
+	}
+
 	prev, err := snapshot.LoadGHPRs()
 	if err != nil {
 		// A corrupt cache is discardable: treat as a first run (baseline
@@ -67,7 +201,7 @@ func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time) error {
 		prev = nil
 	}
 
-	cur, err := fetchGHPRs(prev, now)
+	cur, filter, err := fetchGHPRs(prev, now, filter)
 	if err != nil {
 		fmt.Fprintf(stderr, "gh poll: fetch failed, keeping previous snapshot: %v\n", err)
 		return nil // no network / no gh is not an error state (§6)
@@ -96,10 +230,14 @@ func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time) error {
 		}
 	}
 
+	scope := ""
+	if !filter.empty() {
+		scope = fmt.Sprintf(" (owners: %s)", filter)
+	}
 	if prev == nil {
-		fmt.Fprintf(stdout, "gh poll: baseline snapshot of %d PRs (no transitions on first run)\n", len(cur.PRs))
+		fmt.Fprintf(stdout, "gh poll: baseline snapshot of %d PRs%s (no transitions on first run)\n", len(cur.PRs), scope)
 	} else {
-		fmt.Fprintf(stdout, "gh poll: %d PRs tracked, %d transitions\n", len(cur.PRs), len(transitions))
+		fmt.Fprintf(stdout, "gh poll: %d PRs tracked%s, %d transitions\n", len(cur.PRs), scope, len(transitions))
 	}
 	return nil
 }
@@ -135,15 +273,28 @@ type ghCheckNode struct {
 // by the user, plus every PR the previous snapshot still thought was open —
 // re-fetching the latter is how a merge or close gets observed. Any error
 // aborts the whole fetch: a partial picture must never reach the diff.
-func fetchGHPRs(prev *snapshot.GHPRs, now time.Time) (*snapshot.GHPRs, error) {
-	out, err := ghRun("search", "prs", "--author=@me", "--state=open",
-		"--json", "number,repository", "--limit", "200")
+// The owner filter applies to both halves, so a PR that falls out of scope
+// simply stops being tracked; it is never narrated as closed.
+// It returns the resolved filter (with @me expanded) so callers can report
+// the scope they actually polled rather than the token they were given.
+func fetchGHPRs(prev *snapshot.GHPRs, now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter, error) {
+	filter, err := filter.resolveSelf()
 	if err != nil {
-		return nil, err
+		return nil, filter, err
+	}
+
+	args := []string{"search", "prs", "--author=@me", "--state=open",
+		"--json", "number,repository", "--limit", "200"}
+	for _, owner := range filter.include {
+		args = append(args, "--owner="+owner) // narrow server-side where we can
+	}
+	out, err := ghRun(args...)
+	if err != nil {
+		return nil, filter, err
 	}
 	var open []ghSearchItem
 	if err := json.Unmarshal(out, &open); err != nil {
-		return nil, fmt.Errorf("parse gh search output: %w", err)
+		return nil, filter, fmt.Errorf("parse gh search output: %w", err)
 	}
 
 	type key struct {
@@ -159,11 +310,14 @@ func fetchGHPRs(prev *snapshot.GHPRs, now time.Time) (*snapshot.GHPRs, error) {
 		}
 	}
 	for _, it := range open {
+		if !filter.allows(it.Repository.NameWithOwner) {
+			continue
+		}
 		track(key{it.Repository.NameWithOwner, it.Number})
 	}
 	if prev != nil {
 		for _, pr := range prev.PRs {
-			if pr.State == "open" {
+			if pr.State == "open" && filter.allows(pr.Repo) {
 				track(key{pr.Repo, pr.Number})
 			}
 		}
@@ -183,11 +337,11 @@ func fetchGHPRs(prev *snapshot.GHPRs, now time.Time) (*snapshot.GHPRs, error) {
 		out, err := ghRun("pr", "view", fmt.Sprint(k.number), "--repo", k.repo,
 			"--json", "state,isDraft,title,url,reviewDecision,statusCheckRollup,updatedAt")
 		if err != nil {
-			return nil, err
+			return nil, filter, err
 		}
 		var v ghPRView
 		if err := json.Unmarshal(out, &v); err != nil {
-			return nil, fmt.Errorf("parse gh pr view output for %s#%d: %w", k.repo, k.number, err)
+			return nil, filter, fmt.Errorf("parse gh pr view output for %s#%d: %w", k.repo, k.number, err)
 		}
 		ref := fmt.Sprintf("gh:pr:%s#%d", k.repo, k.number)
 		cur.PRs[ref] = snapshot.PR{
@@ -203,7 +357,7 @@ func fetchGHPRs(prev *snapshot.GHPRs, now time.Time) (*snapshot.GHPRs, error) {
 			UpdatedAt: v.UpdatedAt,
 		}
 	}
-	return cur, nil
+	return cur, filter, nil
 }
 
 // checksFrom folds the rollup into one word: any red check makes the PR

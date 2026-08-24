@@ -5,6 +5,7 @@
 #   ./install.sh --timer      also enable the systemd user timer for `daylog poll gh`
 #   ./install.sh --omarchy    also install + enable the Omarchy bar widget (Linux)
 #   ./install.sh --swiftbar   also install the SwiftBar menu bar widget (macOS)
+#   ./install.sh --skills     also install the daylog skill for Codex and Claude Code
 #
 # Works on Linux and macOS; on Windows use `go install .` instead, plus
 # windows-plugin\install.ps1 for the tray widget.
@@ -15,13 +16,15 @@ REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 WITH_TIMER=false
 WITH_OMARCHY=false
 WITH_SWIFTBAR=false
+WITH_SKILLS=false
 
 for arg in "$@"; do
     case "$arg" in
         --timer) WITH_TIMER=true ;;
         --omarchy) WITH_OMARCHY=true ;;
         --swiftbar) WITH_SWIFTBAR=true ;;
-        *) echo "usage: ./install.sh [--timer] [--omarchy] [--swiftbar]" >&2; exit 1 ;;
+        --skills) WITH_SKILLS=true ;;
+        *) echo "usage: ./install.sh [--timer] [--omarchy] [--swiftbar] [--skills]" >&2; exit 1 ;;
     esac
 done
 
@@ -91,6 +94,31 @@ if [ "$WITH_SWIFTBAR" = true ]; then
     chmod +x "$SWIFTBAR_DIR/daylog.1m.js"
     open -g swiftbar://refreshallplugins || true # SwiftBar may not be running
     echo "SwiftBar widget installed: $SWIFTBAR_DIR/daylog.1m.js"
+fi
+
+if [ "$WITH_SKILLS" = true ]; then
+    AGENTS_SKILLS_DIR="${DAYLOG_AGENTS_SKILLS_DIR:-$HOME/.agents/skills}"
+    CLAUDE_SKILLS_DIR="${DAYLOG_CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+
+    # Preflight both destinations before copying so a name collision cannot
+    # leave only one harness updated.
+    for skills_root in "$AGENTS_SKILLS_DIR" "$CLAUDE_SKILLS_DIR"; do
+        skill_dir="$skills_root/daylog"
+        if [ -e "$skill_dir" ] && {
+            [ ! -f "$skill_dir/SKILL.md" ] ||
+            ! grep -q '^  source: github.com/drdreo/daylog$' "$skill_dir/SKILL.md"
+        }; then
+            echo "error: $skill_dir exists but is not the daylog skill — not touching it" >&2
+            exit 1
+        fi
+    done
+
+    for skills_root in "$AGENTS_SKILLS_DIR" "$CLAUDE_SKILLS_DIR"; do
+        skill_dir="$skills_root/daylog"
+        mkdir -p "$skill_dir"
+        cp "$REPO_DIR/skills/daylog/SKILL.md" "$skill_dir/SKILL.md"
+        echo "Agent skill installed: $skill_dir"
+    done
 fi
 
 echo
