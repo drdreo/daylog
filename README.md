@@ -44,6 +44,7 @@ daylog accept "cache the embeddings"                 # adopt an agent's proposal
 daylog decline "cache the embeddings" -n "premature" # …or drop it from every view
 
 daylog today                    # markdown view of today
+daylog today 2026-08-20         # …or any past day (what the widgets' ◀/▶ call)
 daylog today --json             # the consumer contract (widget, summarizer)
 daylog today --source agent     # only agent entries
 daylog render 2026-08-20        # any past day
@@ -176,6 +177,14 @@ A closed todo appears in `entries` on the day it was *closed*, carrying both
 timestamps: `ts` is when it was filed, `done_ts` when it was finished. Lead
 the row with `done_ts` — that is when it happened — and show `ts` alongside,
 so a todo you carried for three days says so.
+
+All three walk back through earlier days — `daylog today <DATE> --json` is
+the same contract, so a consumer gets day navigation for free. Only `entries`
+is scoped to a day: `open_todos` are obligations that don't expire at
+midnight and `prs` is live state, so stepping back moves the log alone and
+the icon keeps flagging what needs you *now*. The choice of day is
+deliberately temporary — the widgets return to today on their own, because a
+menu bar still describing Tuesday is worse than one that forgets.
 
 - **Linux / Omarchy** — [`omarchy-plugin/`](omarchy-plugin/) is a bar widget
   for Omarchy 4's Quickshell desktop. Install with `./install.sh --omarchy`;

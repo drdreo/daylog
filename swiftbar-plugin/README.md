@@ -20,8 +20,10 @@ ships — no python, no jq.
   not load the day.
 - **Open todos** — every open todo in one list, yours and the agents'. An
   agent proposal still awaiting your verdict is accented and marked `●`.
-- **Today** — the day's entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are checked and dimmed.
+- **The day's log** — its entries with time, source, and live PR status on
+  entries that reference a PR. Closed todos are checked and dimmed. The
+  heading names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`)
+  and the `◀`/`▶` rows walk to the days on either side.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
 
 ## Actions
@@ -30,10 +32,38 @@ ships — no python, no jq.
 |---|---|
 | Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
 | Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
+| Day heading | `◀`/`▶` step a day back or forward, `↩ Back to today` returns in one click |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders |
 
 Hover any entry for the full detail (source, refs, close note).
+
+## Walking back through days
+
+The `◀`/`▶` rows re-run the same read against another day
+(`daylog today 2026-08-19 --json`) and re-render. Only the log section moves:
+open todos are obligations that don't expire at midnight and PRs are live
+state, so the menu bar icon keeps counting what needs you *now* whichever day
+you are reading. Forward stops at today. An empty day says which day it was
+empty about, so an untouched Tuesday can't read as a quiet morning.
+
+They are rows and not arrow keys because an open macOS menu owns the arrow
+keys for its own row and submenu navigation — a plugin never sees them. (The
+Omarchy panel is a real focused window, so there `←`/`→` do this directly.)
+
+The day you picked is remembered in `$TMPDIR/daylog-view-day` — SwiftBar
+re-executes the plugin from scratch on every refresh, so it has to live
+somewhere — and expires after 10 minutes. That is deliberate: this is a
+*today* widget, and a menu bar that still reads Tuesday three hours after you
+went looking is worse than one that forgets.
+
+A `◀`/`▶` row re-runs *this plugin* with two plain arguments
+(`daylog.1m.js view-day 2026-08-19`), which records the choice and lets
+SwiftBar's `refresh=true` redraw. Keep it that way: menu lines carry
+arguments, never shell commands. A first cut wrote the file with
+`bash=/bin/sh param1=-c param2="printf '%s %s' …"`, and the `%s` inside that
+param was enough to stop SwiftBar building the menu at all — no error, no
+plugin, no menu bar icon.
 
 ## Install
 

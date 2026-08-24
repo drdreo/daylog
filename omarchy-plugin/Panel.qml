@@ -193,7 +193,7 @@ Panel {
 
   function footerText() {
     if (store.polling) return "Polling GitHub…"
-    var hints = "↑↓ · ⏎ open · d done · a accept · x decline · r refresh · p poll"
+    var hints = "↑↓ rows · ←→ days · ⏎ open · d done · a accept · x decline · r refresh · p poll"
     if (store.updatedMs <= 0) return hints
     return "Updated " + Qt.formatTime(new Date(store.updatedMs), "HH:mm") + " · " + hints
   }
@@ -207,6 +207,9 @@ Panel {
     cursorActive = false
     cursorIndex = -1
     if (panelFlick) panelFlick.contentY = 0
+    // Opening lands on today. Walking back through days is an errand, not a
+    // setting — the panel you open tomorrow should not still be on Tuesday.
+    store.viewDate = ""
     store.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -263,8 +266,11 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
 
+      // ↑↓ walks the rows, ←→ walks the days. The panel is a real focused
+      // window, so unlike the menu-based siblings it can have both.
       onMoveRequested: function(dx, dy) {
         if (dy !== 0) root.moveCursor(dy)
+        else if (dx !== 0) store.stepDay(dx)
       }
       onActivateRequested: root.activateSelected()
       onDeleteRequested: root.dismissSelected()
@@ -277,6 +283,9 @@ Panel {
         else if (t === "d" || t === "D") root.dismissSelected()
         else if (t === "a" || t === "A") root.triageSelected("accept")
         else if (t === "x" || t === "X") root.triageSelected("decline")
+        else if (t === "h" || t === "H") store.stepDay(-1)
+        else if (t === "l" || t === "L") store.stepDay(1)
+        else if (t === "t" || t === "T") store.resetDay()
       }
 
       Flickable {
@@ -356,23 +365,30 @@ Panel {
             }
           }
 
-          // ---------- Today's entries ----------
+          // ---------- The viewed day's entries ----------
+          //
+          // Only entries are scoped to a day: open todos are obligations that
+          // don't expire at midnight and PRs are live state, so ←→ moves this
+          // section alone — and the bar icon keeps flagging what needs you
+          // *now*, whichever day you happen to be reading.
           PanelSeparator {
-            visible: store.entries.length > 0
+            visible: store.day !== null
             foreground: root.foreground
           }
 
           Column {
-            visible: store.entries.length > 0
+            visible: store.day !== null
             width: parent.width
             spacing: Style.spacing.md
 
             PanelSectionHeader {
               width: parent.width
-              text: "TODAY"
+              text: store.dayHeading(store.shownDate)
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
+
+            DayNav { width: parent.width }
 
             Repeater {
               model: store.entries
@@ -386,16 +402,17 @@ Panel {
                 rowIndex: root.entriesOffset + index
               }
             }
-          }
 
-          Text {
-            visible: store.day !== null && store.entries.length === 0 && store.error === ""
-            width: parent.width
-            text: "Nothing logged yet today."
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
+            Text {
+              visible: store.entries.length === 0
+              width: parent.width
+              text: store.emptyDayNote(store.shownDate)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
           }
 
           // ---------- Open PRs (snapshot join) ----------
@@ -440,6 +457,67 @@ Panel {
             elide: Text.ElideRight
           }
         }
+      }
+    }
+  }
+
+  // One clickable label in the day strip.
+  component NavLink: Text {
+    id: navLink
+    signal triggered()
+
+    color: navLinkHover.containsMouse ? root.foreground : root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+
+    MouseArea {
+      id: navLinkHover
+      anchors.fill: parent
+      // A caption-sized target deserves a little slack around it.
+      anchors.margins: -Style.spacing.sm
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: navLink.triggered()
+    }
+  }
+
+  // The ←→ keys made visible: the neighbouring days, clickable, plus the way
+  // straight back to today once it is more than one step away. Keyboard users
+  // never need this strip — but nobody discovers a keybinding they were never
+  // shown, and the mouse shouldn't be a second-class citizen here.
+  component DayNav: Item {
+    id: dayNav
+
+    readonly property string prevDate: store.shiftDay(store.shownDate, -1)
+    readonly property string nextDate: store.shiftDay(store.shownDate, 1)
+
+    implicitHeight: prevLink.implicitHeight
+
+    NavLink {
+      id: prevLink
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      text: "◀  " + store.dayName(dayNav.prevDate)
+      onTriggered: store.stepDay(-1)
+    }
+
+    Row {
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(12)
+
+      // Forward stops at today: a day that hasn't happened has nothing to log.
+      NavLink {
+        visible: store.shownDelta < 0
+        text: store.dayName(dayNav.nextDate) + "  ▶"
+        onTriggered: store.stepDay(1)
+      }
+
+      // Redundant while ▶ already says Today; the long way back needs one click.
+      NavLink {
+        visible: store.shownDelta < -1
+        text: "↩  Today"
+        onTriggered: store.resetDay()
       }
     }
   }

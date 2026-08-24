@@ -11,7 +11,7 @@
 // <xbar.version>v1.0</xbar.version>
 // <xbar.author>drdreo</xbar.author>
 // <xbar.author.github>drdreo</xbar.author.github>
-// <xbar.desc>Today's daylog: entries, open todos with agent proposals to triage, and open PRs with live checks/review state.</xbar.desc>
+// <xbar.desc>Today's daylog: entries, open todos with agent proposals to triage, and open PRs with live checks/review state. Walk back through earlier days with the ◀/▶ rows.</xbar.desc>
 // <xbar.dependencies>daylog</xbar.dependencies>
 // <xbar.abouturl>https://github.com/drdreo/daylog</xbar.abouturl>
 // <xbar.var>string(DAYLOG_PATH=""): Absolute path to the daylog CLI (empty = search PATH).</xbar.var>
@@ -34,10 +34,22 @@ var URGENT = '#c4321e,#ff6b5e'
 // action of its own, so an actionable-looking row has to name its color.
 var TEXT = '#1d1d1f,#f5f5f7'
 
+// How long a "show me another day" choice sticks. This is a *today* widget:
+// a menu bar that still reads Tuesday three hours after you went looking is
+// worse than one that forgets, so the view drifts back on its own.
+var VIEW_DAY_TTL_SEC = 10 * 60
+// The argument that means "stop viewing another day". A word rather than an
+// empty string, because a menu line drops empty param values.
+var VIEW_DAY_TODAY = 'today'
+
+var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
 // ---------------------------------------------------------------- rendering
 //
 // Everything below down to the JXA glue is pure: render(day, ctx) -> lines.
-// ctx: { bin, error, nowMs }. day: parsed `daylog today --json`, or null.
+// ctx: { bin, error, nowMs, statePath }. day: parsed `daylog today [DATE]
+// --json`, or null.
 
 // The text part of a menu line must not contain the param separator, and
 // param values are double-quoted, so both strip what would break parsing.
@@ -89,8 +101,81 @@ function clockOf(ts) {
 function shortDateTime(ts) {
   var t = new Date(String(ts || ''))
   if (isNaN(t.getTime())) return ''
-  var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  return months[t.getMonth()] + ' ' + t.getDate() + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())
+  return MONTHS[t.getMonth()] + ' ' + t.getDate() + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())
+}
+
+// ------------------------------------------------------------ days as days
+//
+// A day is a calendar day, never an instant: it is shifted and compared by
+// its date components at local midnight, so day arithmetic survives the
+// clocks changing. `iso` is always the YYYY-MM-DD the CLI speaks.
+
+function isoOf(d) {
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+}
+
+function dayOf(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''))
+  return m === null ? null : new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+}
+
+function shiftDay(iso, delta) {
+  var d = dayOf(iso)
+  return d === null ? '' : isoOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta))
+}
+
+// Whole calendar days from `fromISO` to `toISO` — negative for the past. An
+// unparseable date yields 0, which degrades to "treat it as today" in every
+// caller rather than to a broken menu.
+function dayDelta(fromISO, toISO) {
+  var a = dayOf(fromISO), b = dayOf(toISO)
+  if (a === null || b === null) return 0
+  return Math.round((b.getTime() - a.getTime()) / 86400000)
+}
+
+function calendarName(iso) {
+  var d = dayOf(iso)
+  return d === null ? '' : WEEKDAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate()
+}
+
+// The name a human would use: Today, Yesterday, or "Wed, Aug 19".
+function dayName(iso, todayISO) {
+  var delta = dayDelta(todayISO, iso)
+  if (delta === 0) return 'Today'
+  if (delta === -1) return 'Yesterday'
+  if (delta === 1) return 'Tomorrow'
+  var name = calendarName(iso)
+  return name === '' ? String(iso || '') : name
+}
+
+// The distance spelled out, for days whose name doesn't already say it.
+function dayDistance(iso, todayISO) {
+  var delta = dayDelta(todayISO, iso)
+  if (delta >= -1 && delta <= 1) return ''
+  return delta < 0 ? -delta + ' days ago' : 'in ' + delta + ' days'
+}
+
+// The day section's heading: the day's name, its date when the name hides it,
+// and how far back it is. "TODAY · MON, AUG 24", "WED, AUG 19 · 5 DAYS AGO".
+function dayHeading(iso, todayISO) {
+  var name = dayName(iso, todayISO)
+  var parts = [name]
+  var calendar = calendarName(iso)
+  if (calendar !== '' && calendar !== name) parts.push(calendar)
+  var distance = dayDistance(iso, todayISO)
+  if (distance !== '') parts.push(distance)
+  return parts.join(' · ').toUpperCase()
+}
+
+// The empty state names the day it is empty *about*, so an untouched Tuesday
+// can never be misread as a quiet morning. The ◀/▶ rows sit right above it,
+// so the way out of an empty day is already on screen.
+function emptyDayNote(iso, todayISO) {
+  var delta = dayDelta(todayISO, iso)
+  if (delta === 0) return 'Nothing logged yet today.'
+  if (delta > 0) return 'Nothing logged for ' + dayName(iso, todayISO).toLowerCase() + ' yet.'
+  if (delta === -1) return 'Nothing was logged yesterday.'
+  return 'Nothing was logged on ' + calendarName(iso) + '.'
 }
 
 // A closed todo takes its place in the log when it was closed, so that is
@@ -215,6 +300,66 @@ function heroMeta(day) {
   return parts.join(' · ')
 }
 
+// ------------------------------------------------------------ day navigation
+//
+// The day section is a window onto one day, not a hardcoded "today", and the
+// ◀/▶ rows slide it. They are rows and not arrow keys on purpose: an open
+// macOS menu owns the arrow keys for its own row and submenu navigation, and
+// a plugin never sees them. The Omarchy panel is a real focused window, so
+// that is where ←/→ do this for real.
+//
+// Which day is being viewed lives in a file, because SwiftBar re-executes
+// this plugin from scratch on every refresh — anything that has to outlive a
+// click has to be on disk. The file carries the second it was written so the
+// choice can expire (VIEW_DAY_TTL_SEC).
+
+// Point the widget at `iso` (VIEW_DAY_TODAY for today) and re-render. The
+// action re-runs *this plugin* with two plain arguments, which run() handles
+// before it renders anything — the same discipline as daylogAction: no menu
+// line ever carries a shell command. An earlier version wrote the file with
+// `/bin/sh -c "printf '%s %s' …"`, and the `%s` in that param was enough to
+// stop SwiftBar building the menu at all, taking the whole icon with it.
+function viewDayAction(ctx, iso, extra) {
+  var params = {
+    bash: ctx.self, param1: 'view-day', param2: iso === '' ? VIEW_DAY_TODAY : iso,
+    terminal: 'false', refresh: 'true',
+  }
+  for (var k in extra) params[k] = extra[k]
+  return params
+}
+
+// Heading plus the rows that walk off this day. Always rendered, even for an
+// empty day — a day you cannot navigate away from is a dead end. Forward
+// stops at today: there is nothing to log in a day that hasn't happened.
+function dayNavLines(day, ctx, lines) {
+  var iso = String(day.date || '')
+  var todayISO = isoOf(new Date(ctx.nowMs))
+  var delta = dayDelta(todayISO, iso)
+  var prev = shiftDay(iso, -1)
+  var next = shiftDay(iso, 1)
+
+  lines.push(line(dayHeading(iso, todayISO), { color: DIM, size: 11 }))
+  // Without a path back to this file there is nothing to click; the heading
+  // still names the day rather than leaving dead rows behind.
+  if (!ctx.self) return
+  if (prev !== '') {
+    lines.push(line('◀  ' + dayName(prev, todayISO), viewDayAction(ctx, prev, {
+      color: TEXT, sfimage: 'chevron.left', tooltip: 'Show ' + calendarName(prev),
+    })))
+  }
+  if (next !== '' && delta < 0) {
+    lines.push(line('▶  ' + dayName(next, todayISO), viewDayAction(ctx, delta === -1 ? '' : next, {
+      color: TEXT, sfimage: 'chevron.right', tooltip: 'Show ' + calendarName(next),
+    })))
+  }
+  // Redundant when ▶ already says "Today"; the long way back needs one click.
+  if (delta !== 0 && delta !== -1) {
+    lines.push(line('↩  Back to today', viewDayAction(ctx, '', {
+      color: TEXT, sfimage: 'arrow.uturn.left', tooltip: 'Show today again',
+    })))
+  }
+}
+
 function render(day, ctx) {
   var entries = day && day.entries ? day.entries : []
   var openTodos = day && day.open_todos ? day.open_todos : []
@@ -270,24 +415,29 @@ function render(day, ctx) {
     }
   }
 
-  // ---------- today's entries ----------
-  if (entries.length > 0) {
+  // ---------- the viewed day's entries ----------
+  // Only `entries` is scoped to a day: open todos are obligations that don't
+  // expire at midnight and PRs are live state, so walking back through days
+  // moves this section alone — and the menu bar badge keeps counting what
+  // needs you *now*, whichever day you happen to be reading.
+  if (day !== null) {
     lines.push('---')
-    lines.push(line('TODAY', { color: DIM, size: 11 }))
-    for (var k = 0; k < entries.length; k++) {
-      var e = entries[k]
-      var pr = e.pr || null
-      var alarming = pr !== null && String(pr.checks) === 'failing'
-      var done = e.done === true
-      lines.push(line(truncate(entryText(e, true), 78) + '  — ' + shortSource(e.source), {
-        tooltip: entryTooltip(e),
-        color: alarming ? URGENT : (done ? DIM : undefined),
-        href: pr && pr.url ? String(pr.url) : undefined,
-      }))
+    dayNavLines(day, ctx, lines)
+    if (entries.length > 0) {
+      for (var k = 0; k < entries.length; k++) {
+        var e = entries[k]
+        var pr = e.pr || null
+        var alarming = pr !== null && String(pr.checks) === 'failing'
+        var done = e.done === true
+        lines.push(line(truncate(entryText(e, true), 78) + '  — ' + shortSource(e.source), {
+          tooltip: entryTooltip(e),
+          color: alarming ? URGENT : (done ? DIM : undefined),
+          href: pr && pr.url ? String(pr.url) : undefined,
+        }))
+      }
+    } else {
+      lines.push(line(emptyDayNote(String(day.date || ''), isoOf(new Date(ctx.nowMs))), { color: DIM }))
     }
-  } else if (day !== null) {
-    lines.push('---')
-    lines.push(line('Nothing logged yet today.', { color: DIM }))
   }
 
   // ---------- open PRs (snapshot join) ----------
@@ -347,16 +497,93 @@ function findDaylog() {
   try { return String(sh('command -v daylog')).trim() } catch (e) { return '' }
 }
 
-function run() {
-  var ctx = { bin: findDaylog(), icon: envVar('DAYLOG_ICON'), error: '', nowMs: Date.now() }
+// This file's own path, so a menu line can re-run it (see viewDayAction).
+// SwiftBar states it outright; under xbar it comes out of the interpreter's
+// argument list, which is where osascript left it.
+function selfPath() {
+  var declared = envVar('SWIFTBAR_PLUGIN_PATH')
+  if (declared) return declared
+  try {
+    ObjC.import('Foundation')
+    var args = ObjC.deepUnwrap($.NSProcessInfo.processInfo.arguments)
+    for (var i = args.length - 1; i >= 0; i--) {
+      var path = String(args[i])
+      if (!/\.js$/.test(path)) continue
+      // A menu action is run from who-knows-where, so the path it carries has
+      // to be absolute even when this file was invoked by a relative one.
+      if (path.charAt(0) !== '/') {
+        path = ObjC.unwrap($.NSFileManager.defaultManager.currentDirectoryPath) + '/' + path
+      }
+      return ObjC.unwrap($.NSString.alloc.initWithUTF8String(path).stringByStandardizingPath)
+    }
+  } catch (e) { /* fall through: the nav rows simply aren't drawn */ }
+  return ''
+}
+
+// $TMPDIR is exactly the right home for this: per-user, and swept by the OS,
+// so a day you wandered off to never becomes a permanent setting.
+function viewDayPath() {
+  var dir = envVar('TMPDIR') || '/tmp'
+  if (dir.charAt(dir.length - 1) !== '/') dir += '/'
+  return dir + 'daylog-view-day'
+}
+
+// The day the ◀/▶ rows last pointed at, or '' for today. An expired, absent,
+// or malformed file all read as today — the widget's resting state.
+function readViewDay(path, nowMs) {
+  var text = ''
+  try {
+    ObjC.import('Foundation')
+    text = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(
+      path, $.NSUTF8StringEncoding, null)) || ''
+  } catch (e) { return '' }
+  var m = /^(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(String(text))
+  if (m === null) return ''
+  if (Math.floor(nowMs / 1000) - Number(m[1]) > VIEW_DAY_TTL_SEC) return ''
+  return m[2]
+}
+
+// Record the day to view, or forget it. Written here rather than by a shell
+// command in the menu line: the file is this file's business, and a menu that
+// carries no commands cannot mis-parse one.
+function writeViewDay(path, iso, nowMs) {
+  ObjC.import('Foundation')
+  if (iso === VIEW_DAY_TODAY || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    $.NSFileManager.defaultManager.removeItemAtPathError(path, null)
+    return
+  }
+  var body = Math.floor(nowMs / 1000) + ' ' + iso
+  $.NSString.alloc.initWithUTF8String(body)
+    .writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null)
+}
+
+function run(argv) {
+  var nowMs = Date.now()
+  var statePath = viewDayPath()
+
+  // `view-day <YYYY-MM-DD|today>`: what the ◀/▶ rows invoke. It only records
+  // the choice — SwiftBar's refresh=true re-runs this file to draw it.
+  if (argv && argv.length >= 2 && String(argv[0]) === 'view-day') {
+    writeViewDay(statePath, String(argv[1]), nowMs)
+    return ''
+  }
+
+  var ctx = {
+    bin: findDaylog(), icon: envVar('DAYLOG_ICON'), error: '',
+    nowMs: nowMs, statePath: statePath, self: selfPath(),
+  }
   var day = null
   if (!ctx.bin) {
     ctx.error = 'daylog CLI not found — install it (install.sh) or set DAYLOG_PATH in this plugin’s settings'
   } else {
+    // The date came out of the regex in readViewDay, so it is a bare
+    // YYYY-MM-DD and safe to hand to the shell as-is.
+    var viewDay = readViewDay(ctx.statePath, ctx.nowMs)
+    var args = 'today' + (viewDay === '' ? '' : ' ' + viewDay) + ' --json'
     try {
-      day = JSON.parse(sh(shellQuote(ctx.bin) + ' today --json'))
+      day = JSON.parse(sh(shellQuote(ctx.bin) + ' ' + args))
     } catch (e) {
-      ctx.error = '`daylog today --json` failed: ' + String(e.message || e)
+      ctx.error = '`daylog ' + args + '` failed: ' + String(e.message || e)
     }
   }
   return render(day, ctx).join('\n')
