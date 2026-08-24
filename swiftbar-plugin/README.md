@@ -59,11 +59,31 @@ went looking is worse than one that forgets.
 
 A `◀`/`▶` row re-runs *this plugin* with two plain arguments
 (`daylog.1m.js view-day 2026-08-19`), which records the choice and lets
-SwiftBar's `refresh=true` redraw. Keep it that way: menu lines carry
-arguments, never shell commands. A first cut wrote the file with
-`bash=/bin/sh param1=-c param2="printf '%s %s' …"`, and the `%s` inside that
-param was enough to stop SwiftBar building the menu at all — no error, no
-plugin, no menu bar icon.
+SwiftBar's `refresh=true` redraw. Keep it that way: a menu line carries
+arguments, never a shell command, so nothing in it can be mis-parsed on the
+way to a shell.
+
+The nav rows carry no `sfimage`. SF Symbols do render on the submenu items,
+but on a row that already leads with an arrow glyph SwiftBar drew no symbol
+at all, so the arrow is the text's job.
+
+## If the menu bar icon disappears
+
+Suspect the menu bar before the plugin. A status item that SwiftBar
+re-creates on reload can land in space you cannot see — behind the notch, or
+past the right edge of a full menu bar — and the symptom is indistinguishable
+from a broken plugin: no icon, no error. Check the plugin is actually healthy
+first, which takes seconds:
+
+```sh
+pgrep -x SwiftBar                                  # is it even running
+"$(defaults read com.ameba.SwiftBar PluginDirectory)/daylog.1m.js"; echo $?
+```
+
+Valid output and exit 0 means the plugin is fine — SwiftBar re-runs it on
+every interval regardless of whether you can see the result. Then free some
+menu bar room (quit a menu bar app, or ⌘-drag items apart) or restart
+SwiftBar so the item is placed again.
 
 ## Install
 

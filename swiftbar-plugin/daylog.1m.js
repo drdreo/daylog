@@ -315,10 +315,9 @@ function heroMeta(day) {
 
 // Point the widget at `iso` (VIEW_DAY_TODAY for today) and re-render. The
 // action re-runs *this plugin* with two plain arguments, which run() handles
-// before it renders anything — the same discipline as daylogAction: no menu
-// line ever carries a shell command. An earlier version wrote the file with
-// `/bin/sh -c "printf '%s %s' …"`, and the `%s` in that param was enough to
-// stop SwiftBar building the menu at all, taking the whole icon with it.
+// before it renders anything — the same discipline as daylogAction: a menu
+// line carries arguments, never a shell command, so nothing here can be
+// mis-parsed on the way to a shell.
 function viewDayAction(ctx, iso, extra) {
   var params = {
     bash: ctx.self, param1: 'view-day', param2: iso === '' ? VIEW_DAY_TODAY : iso,
@@ -342,20 +341,23 @@ function dayNavLines(day, ctx, lines) {
   // Without a path back to this file there is nothing to click; the heading
   // still names the day rather than leaving dead rows behind.
   if (!ctx.self) return
+  // No sfimage on these rows: SF Symbols render on the submenu items above,
+  // but on a row that already leads with a glyph SwiftBar drew nothing at all
+  // (checked against a live menu bar), so the arrow is the text's job.
   if (prev !== '') {
     lines.push(line('◀  ' + dayName(prev, todayISO), viewDayAction(ctx, prev, {
-      color: TEXT, sfimage: 'chevron.left', tooltip: 'Show ' + calendarName(prev),
+      color: TEXT, tooltip: 'Show ' + calendarName(prev),
     })))
   }
   if (next !== '' && delta < 0) {
     lines.push(line('▶  ' + dayName(next, todayISO), viewDayAction(ctx, delta === -1 ? '' : next, {
-      color: TEXT, sfimage: 'chevron.right', tooltip: 'Show ' + calendarName(next),
+      color: TEXT, tooltip: 'Show ' + calendarName(next),
     })))
   }
   // Redundant when ▶ already says "Today"; the long way back needs one click.
   if (delta !== 0 && delta !== -1) {
     lines.push(line('↩  Back to today', viewDayAction(ctx, '', {
-      color: TEXT, sfimage: 'arrow.uturn.left', tooltip: 'Show today again',
+      color: TEXT, tooltip: 'Show today again',
     })))
   }
 }
