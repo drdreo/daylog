@@ -29,7 +29,7 @@ func JoinGH(d *Day, snap *snapshot.GHPRs) {
 	}
 	decorate(d.Entries)
 	decorate(d.OpenTodos)
-	decorate(d.AgentInbox)
+	decorate(d.NeedsTriage)
 
 	for _, pr := range snap.PRs {
 		if pr.State == "open" {

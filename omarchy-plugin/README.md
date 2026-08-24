@@ -11,12 +11,12 @@ is replaceable in an afternoon.
 
 ## What it shows
 
-- **Bar icon** — lights up (active color) when something needs you: untriaged
-  agent todos in the inbox, or an open PR with failing checks.
+- **Bar icon** — lights up (active color) when something needs you: an agent
+  proposal awaiting triage, or an open PR with failing checks.
   Left-click toggles the panel, right-click runs `daylog poll gh`,
   middle-click refreshes.
-- **Agent inbox** — todos filed by agents, awaiting your triage.
-- **Open todos** — your own open obligations, any day.
+- **Open todos** — every open todo in one list, yours and the agents'. An
+  agent proposal still awaiting your verdict is accented and marked `●`.
 - **Today** — the day's entries with time, source, and live PR status on
   entries that reference a PR. Closed todos are struck through.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
@@ -24,13 +24,15 @@ is replaceable in an afternoon.
 ## Keyboard
 
 The panel is fully keyboard-driven, one flat cursor over every row
-(inbox → todos → today → PRs):
+(todos → today → PRs):
 
 | Key | Action |
 |---|---|
 | `↑`/`↓` or `k`/`j` | Move the cursor |
 | `Enter` / `Space` / `o` | Open the selected PR in the browser (PR rows, or entries referencing one) |
-| `d` / `x` | Close the selected todo (`daylog done <id>` — dismisses an inbox proposal or finishes your own) |
+| `d` | Close the selected todo (`daylog done <id>`) |
+| `a` | Accept the selected agent proposal (`daylog accept <id>`) — adopt it as yours |
+| `x` | Decline the selected agent proposal (`daylog decline <id>`) — it drops out of every view |
 | `r` | Refresh |
 | `p` | Run `daylog poll gh` |
 | `Tab` | Switch to the neighboring bar panel |

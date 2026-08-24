@@ -27,7 +27,10 @@ Item {
 
   readonly property var entries: day && day.entries ? day.entries : []
   readonly property var openTodos: day && day.open_todos ? day.open_todos : []
-  readonly property var agentInbox: day && day.agent_inbox ? day.agent_inbox : []
+  // needs_triage filters open_todos rather than partitioning it: these are
+  // the agent-filed proposals still awaiting a verdict. Render open_todos
+  // and consult this by id, or the same todo draws twice.
+  readonly property var needsTriage: day && day.needs_triage ? day.needs_triage : []
   readonly property var prs: day && day.prs ? day.prs : []
   readonly property string date: day && day.date ? String(day.date) : ""
   readonly property string prsFetchedAt: day && day.prs_fetched_at ? String(day.prs_fetched_at) : ""
@@ -132,5 +135,35 @@ Item {
       waitForEnd: true
       onStreamFinished: if (text.trim() !== "") console.warn("daylog done", text.trim())
     }
+  }
+
+  // Triage an agent-filed proposal: accept adopts it as yours, decline drops
+  // it from every view. Same single write path, same exact-ULID discipline.
+  function triage(id, verdict) {
+    if (triageProcess.running || String(id) === "") return
+    if (verdict !== "accept" && verdict !== "decline") return
+    // A click is the human ruling, so the identity is stated outright rather
+    // than inherited from whatever $DAYLOG_SOURCE the widget was launched with.
+    triageProcess.command = [daylogPath, verdict, String(id), "--source", "human:widget"]
+    triageProcess.running = true
+  }
+
+  Process {
+    id: triageProcess
+    running: false
+    onExited: root.refresh()
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim() !== "") console.warn("daylog triage", text.trim())
+    }
+  }
+
+  // True when the todo with this id is an untriaged agent proposal.
+  function needsTriageId(id) {
+    for (var i = 0; i < needsTriage.length; i++) {
+      if (String(needsTriage[i].id) === String(id)) return true
+    }
+    return false
   }
 }

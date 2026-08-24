@@ -40,6 +40,9 @@ daylog add "lunch idea: cache the embeddings"        # defaults to note
 daylog done "staging token" --note "won't do: already rotated"
 daylog reclassify 01m0pw23bgqh work                  # promote a sidequest
 
+daylog accept "cache the embeddings"                 # adopt an agent's proposal
+daylog decline "cache the embeddings" -n "premature" # …or drop it from every view
+
 daylog today                    # markdown view of today
 daylog today --json             # the consumer contract (widget, summarizer)
 daylog today --source agent     # only agent entries
@@ -161,10 +164,13 @@ schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.e
 ## The bar widgets
 
 Three thin surfaces over the same contract — an icon that lights up when
-something needs you (untriaged agent todos, failing PR checks) and a
-panel/menu with the whole day: entries, todos, inbox, and open PRs. All
+something needs you (agent proposals awaiting triage, failing PR checks)
+and a panel/menu with the whole day: open todos, entries, and open PRs. All
 read only `daylog today --json`, exactly as the architecture prescribes for
 consumers.
+
+`needs_triage` filters `open_todos` rather than partitioning it — render
+`open_todos` and consult `needs_triage` by id, or the same todo draws twice.
 
 - **Linux / Omarchy** — [`omarchy-plugin/`](omarchy-plugin/) is a bar widget
   for Omarchy 4's Quickshell desktop. Install with `./install.sh --omarchy`;
@@ -213,8 +219,8 @@ already applied, so consumers stay dumb:
   "generated_at": "2026-08-23T18:02:11+02:00",
   "entries":    [ { "id", "ts", "source", "type", "original_type?", "tldr",
                     "refs", "ctx", "done", "done_note?", "meta?", "pr?" } ],
-  "open_todos": [ "…open human todos, any day…" ],
-  "agent_inbox":[ "…untriaged agent-filed todos, any day…" ],
+  "open_todos":  [ "…every open todo, agent- and human-filed, any day…" ],
+  "needs_triage":[ "…filters open_todos: agent proposals awaiting a verdict…" ],
   "prs":        [ { "ref", "repo", "number", "title", "url", "state",
                     "draft", "checks", "review", "updated_at" } ],
   "prs_fetched_at": "…snapshot age; absent until the poller has run…"

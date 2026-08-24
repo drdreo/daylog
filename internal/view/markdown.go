@@ -69,15 +69,16 @@ func Markdown(d Day) string {
 		}
 	}
 
+	// One list, agent- and human-filed together. Proposals still awaiting a
+	// verdict are marked in place rather than exiled to a second list —
+	// see the Day doc comment.
 	if len(d.OpenTodos) > 0 {
-		b.WriteString("\n## Open todos\n\n")
-		for _, e := range d.OpenTodos {
-			b.WriteString(entryLine(e))
+		heading := "\n## Open todos\n\n"
+		if n := len(d.NeedsTriage); n > 0 {
+			heading = fmt.Sprintf("\n## Open todos (%d awaiting triage)\n\n", n)
 		}
-	}
-	if len(d.AgentInbox) > 0 {
-		b.WriteString("\n## Agent inbox (awaiting triage)\n\n")
-		for _, e := range d.AgentInbox {
+		b.WriteString(heading)
+		for _, e := range d.OpenTodos {
 			b.WriteString(entryLine(e))
 		}
 	}
@@ -109,6 +110,9 @@ func entryLine(e Entry) string {
 	}
 	if e.DoneNote != "" {
 		b.WriteString(fmt.Sprintf(" _(closed: %s)_", e.DoneNote))
+	}
+	if e.Type == event.TypeTodo && !e.Done && strings.HasPrefix(e.Source, "agent:") && e.Verdict == "" {
+		b.WriteString(" _(needs triage)_")
 	}
 	b.WriteString(fmt.Sprintf(" `%s`\n", event.ShortID(e.ID)))
 	return b.String()

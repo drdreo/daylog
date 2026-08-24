@@ -135,11 +135,11 @@ func resolveTarget(target string) (event.Event, error) {
 		return event.Event{}, fmt.Errorf("no events in the store yet")
 	}
 
-	reclassified, doneBy := view.Resolutions(all)
+	reclassified, doneBy, _ := view.Resolutions(all)
 	var openTodos, rest []event.Event
 	for i := len(all) - 1; i >= 0; i-- { // newest first
 		e := all[i]
-		if e.Type == event.TypeDone || e.Type == event.TypeReclassify {
+		if e.Type == event.TypeDone || e.Type == event.TypeReclassify || e.Type == event.TypeTriage {
 			continue
 		}
 		if to, ok := reclassified[e.ID]; ok {

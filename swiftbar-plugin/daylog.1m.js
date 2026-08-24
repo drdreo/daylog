@@ -11,7 +11,7 @@
 // <xbar.version>v1.0</xbar.version>
 // <xbar.author>drdreo</xbar.author>
 // <xbar.author.github>drdreo</xbar.author.github>
-// <xbar.desc>Today's daylog: entries, open todos, the agent inbox, and open PRs with live checks/review state.</xbar.desc>
+// <xbar.desc>Today's daylog: entries, open todos with agent proposals to triage, and open PRs with live checks/review state.</xbar.desc>
 // <xbar.dependencies>daylog</xbar.dependencies>
 // <xbar.abouturl>https://github.com/drdreo/daylog</xbar.abouturl>
 // <xbar.var>string(DAYLOG_PATH=""): Absolute path to the daylog CLI (empty = search PATH).</xbar.var>
@@ -133,15 +133,25 @@ function entryText(e, withTime) {
   return text
 }
 
-// A row for an inbox/open-todo entry: the submenu carries the two actions the
-// Omarchy widget binds to keys — mark done, and open the referenced PR.
-function todoRow(e, ctx, lines) {
+// One open-todo row. Untriaged agent proposals are marked in place (rather
+// than exiled to a second list) and get the accept/decline verdict pair;
+// everything else just gets the usual lifecycle actions.
+function todoRow(e, ctx, lines, untriaged) {
   var pr = e.pr || null
   var alarming = pr !== null && String(pr.checks) === 'failing'
-  lines.push(line(truncate(entryText(e, false), 70), {
-    tooltip: entryTooltip(e),
-    color: alarming ? URGENT : undefined,
+  var label = truncate(entryText(e, false), 70)
+  if (untriaged) label = '● ' + label
+  lines.push(line(label, {
+    tooltip: untriaged ? 'Awaiting triage — ' + entryTooltip(e) : entryTooltip(e),
+    color: alarming ? URGENT : (untriaged ? URGENT : undefined),
   }))
+  if (untriaged) {
+    // A click is the human ruling, so the identity is stated outright rather
+    // than inherited from whatever $DAYLOG_SOURCE the widget was launched with.
+    lines.push(line('-- Accept', daylogAction(ctx.bin, ['accept', String(e.id), '--source', 'human:widget'], { sfimage: 'tray.and.arrow.down' })))
+    lines.push(line('-- Decline', daylogAction(ctx.bin, ['decline', String(e.id), '--source', 'human:widget'], { sfimage: 'xmark' })))
+    lines.push(line('-----'))
+  }
   lines.push(line('-- Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
   if (pr && pr.url) {
     lines.push(line('-- Open ' + pr.repo + '#' + pr.number + ' — ' + prStatusLabel(pr), {
@@ -154,7 +164,8 @@ function heroMeta(day) {
   var parts = [String(day.date || '')]
   var entries = day.entries || []
   parts.push(entries.length + (entries.length === 1 ? ' entry' : ' entries'))
-  var open = (day.open_todos || []).length + (day.agent_inbox || []).length
+  // open_todos already holds every open todo; needs_triage filters it.
+  var open = (day.open_todos || []).length
   if (open > 0) parts.push(open + ' open todo' + (open === 1 ? '' : 's'))
   return parts.join(' · ')
 }
@@ -162,11 +173,16 @@ function heroMeta(day) {
 function render(day, ctx) {
   var entries = day && day.entries ? day.entries : []
   var openTodos = day && day.open_todos ? day.open_todos : []
-  var agentInbox = day && day.agent_inbox ? day.agent_inbox : []
+  var needsTriage = day && day.needs_triage ? day.needs_triage : []
   var prs = day && day.prs ? day.prs : []
 
+  // needs_triage is a filter over open_todos, not a separate list — look up
+  // by id when rendering rather than drawing the same todo twice.
+  var untriaged = {}
+  for (var t = 0; t < needsTriage.length; t++) untriaged[String(needsTriage[t].id)] = true
+
   var failingPRs = prs.filter(function (pr) { return String(pr.checks) === 'failing' }).length
-  var attention = agentInbox.length + failingPRs
+  var attention = needsTriage.length + failingPRs
 
   var fetchedMs = day && day.prs_fetched_at ? new Date(String(day.prs_fetched_at)).getTime() : NaN
   var prsStale = isFinite(fetchedMs) && ctx.nowMs - fetchedMs > 2 * 3600 * 1000
@@ -198,18 +214,15 @@ function render(day, ctx) {
     }))
   }
 
-  // ---------- agent inbox: proposals awaiting triage ----------
-  if (agentInbox.length > 0) {
-    lines.push('---')
-    lines.push(line('AGENT INBOX (' + agentInbox.length + ' to triage)', { color: URGENT, size: 11 }))
-    for (var i = 0; i < agentInbox.length; i++) todoRow(agentInbox[i], ctx, lines)
-  }
-
-  // ---------- open todos ----------
+  // ---------- open todos: one list, untriaged proposals marked ----------
   if (openTodos.length > 0) {
     lines.push('---')
-    lines.push(line('OPEN TODOS', { color: DIM, size: 11 }))
-    for (var j = 0; j < openTodos.length; j++) todoRow(openTodos[j], ctx, lines)
+    var heading = 'OPEN TODOS'
+    if (needsTriage.length > 0) heading += ' (' + needsTriage.length + ' awaiting triage)'
+    lines.push(line(heading, { color: needsTriage.length > 0 ? URGENT : DIM, size: 11 }))
+    for (var j = 0; j < openTodos.length; j++) {
+      todoRow(openTodos[j], ctx, lines, untriaged[String(openTodos[j].id)] === true)
+    }
   }
 
   // ---------- today's entries ----------

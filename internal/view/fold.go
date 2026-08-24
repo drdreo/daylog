@@ -27,21 +27,31 @@ type Entry struct {
 	Ctx          event.Ctx      `json:"ctx"`
 	Done         bool           `json:"done"`
 	DoneNote     string         `json:"done_note,omitempty"`
+	Verdict      string         `json:"verdict,omitempty"`
 	Meta         map[string]any `json:"meta,omitempty"`
 	PR           *snapshot.PR   `json:"pr,omitempty"`
 }
 
 // Day is the folded view object emitted by `daylog today --json`.
-// open_todos and agent_inbox span all days — an obligation doesn't expire
-// at midnight; agent_inbox is the untriaged review queue (§5.2). prs is
-// every open PR from the GitHub snapshot, honest about its age via
+//
+// entries is the day's work log: what actually happened. An open todo is
+// an obligation, not an event, so it stays out of entries and lives in
+// open_todos — otherwise the same line renders twice in every widget.
+//
+// open_todos spans all days (an obligation doesn't expire at midnight) and
+// holds every open todo, agent- and human-filed alike: one list to work
+// from. needs_triage is a *filter over that same list*, not a disjoint
+// bucket — the agent-filed todos still awaiting a verdict (§5.2). Render
+// open_todos; use needs_triage to mark rows and drive the attention badge.
+//
+// prs is every open PR from the GitHub snapshot, honest about its age via
 // prs_fetched_at (empty when the poller has never run).
 type Day struct {
 	Date         string        `json:"date"`
 	GeneratedAt  string        `json:"generated_at"`
 	Entries      []Entry       `json:"entries"`
 	OpenTodos    []Entry       `json:"open_todos"`
-	AgentInbox   []Entry       `json:"agent_inbox"`
+	NeedsTriage  []Entry       `json:"needs_triage"`
 	PRs          []snapshot.PR `json:"prs"`
 	PRsFetchedAt string        `json:"prs_fetched_at,omitempty"`
 }
@@ -50,7 +60,7 @@ type Day struct {
 // Resolution is deterministic: events are ULID-sorted, so for competing
 // reclassify events the last ULID wins (§8), with all opinions preserved.
 func Fold(all []event.Event, date time.Time, now time.Time) Day {
-	reclassified, doneBy := Resolutions(all)
+	reclassified, doneBy, verdicts := Resolutions(all)
 
 	toEntry := func(e event.Event) Entry {
 		en := Entry{
@@ -71,6 +81,7 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 			en.Done = true
 			en.DoneNote = d.TLDR
 		}
+		en.Verdict = verdicts[e.ID]
 		return en
 	}
 
@@ -80,23 +91,33 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 		GeneratedAt: now.Format(time.RFC3339),
 		Entries:     []Entry{},
 		OpenTodos:   []Entry{},
-		AgentInbox:  []Entry{},
+		NeedsTriage: []Entry{},
 		PRs:         []snapshot.PR{},
 	}
 	for _, e := range all {
-		// done and reclassify are bookkeeping folded into their targets;
-		// unknown types render generically as entries (§4.2).
-		isBookkeeping := e.Type == event.TypeDone || e.Type == event.TypeReclassify
+		// done, reclassify and triage are bookkeeping folded into their
+		// targets; unknown types render generically as entries (§4.2).
+		switch e.Type {
+		case event.TypeDone, event.TypeReclassify, event.TypeTriage:
+			continue
+		}
 		en := toEntry(e)
 
-		if !isBookkeeping && eventDay(e) == dayStr {
+		// A declined proposal leaves the ledger intact but every view
+		// behind: it was never yours to carry.
+		if en.Verdict == event.VerdictDeclined {
+			continue
+		}
+
+		isOpenTodo := en.Type == event.TypeTodo && !en.Done
+		// The work log records what happened; an open todo hasn't.
+		if !isOpenTodo && eventDay(e) == dayStr {
 			day.Entries = append(day.Entries, en)
 		}
-		if en.Type == event.TypeTodo && !en.Done {
-			if strings.HasPrefix(en.Source, "agent:") {
-				day.AgentInbox = append(day.AgentInbox, en)
-			} else {
-				day.OpenTodos = append(day.OpenTodos, en)
+		if isOpenTodo {
+			day.OpenTodos = append(day.OpenTodos, en)
+			if strings.HasPrefix(en.Source, "agent:") && en.Verdict == "" {
+				day.NeedsTriage = append(day.NeedsTriage, en)
 			}
 		}
 	}
@@ -104,12 +125,15 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 }
 
 // Resolutions folds the correction events into lookup maps: the effective
-// type per reclassified entry (ULID-sorted input means the last reclassify
-// wins) and the closing done event per closed entry. Shared by Fold and by
-// CLI target resolution so both agree on an entry's current state.
-func Resolutions(all []event.Event) (reclassified map[string]string, doneBy map[string]event.Event) {
+// type per reclassified entry, the closing done event per closed entry, and
+// the standing triage verdict per proposed entry. Input is ULID-sorted, so
+// for competing corrections the last one wins (§8) — which is also what
+// lets a decline be reversed by a later accept. Shared by Fold and by CLI
+// target resolution so both agree on an entry's current state.
+func Resolutions(all []event.Event) (reclassified map[string]string, doneBy map[string]event.Event, verdicts map[string]string) {
 	reclassified = map[string]string{}
 	doneBy = map[string]event.Event{}
+	verdicts = map[string]string{}
 	for _, e := range all {
 		if e.Parent == nil {
 			continue
@@ -121,9 +145,13 @@ func Resolutions(all []event.Event) (reclassified map[string]string, doneBy map[
 			}
 		case event.TypeDone:
 			doneBy[*e.Parent] = e
+		case event.TypeTriage:
+			if v, ok := e.Meta["verdict"].(string); ok && event.ValidateVerdict(v) == nil {
+				verdicts[*e.Parent] = v
+			}
 		}
 	}
-	return reclassified, doneBy
+	return reclassified, doneBy, verdicts
 }
 
 // eventDay extracts the calendar date of an event in its own recorded

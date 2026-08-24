@@ -1,8 +1,8 @@
 # Daylog — Windows 11 tray widget
 
 A system tray (notification area) widget for Windows 11 — and Windows 10.
-One icon, one menu: today's entries, open todos, the agent inbox awaiting
-triage, and every open PR with live checks/review state — the Windows
+One icon, one menu: open todos with agent proposals to triage, today's
+entries, and every open PR with live checks/review state — the Windows
 sibling of the Omarchy bar widget and the macOS SwiftBar plugin.
 
 Like its siblings, this is deliberately the thinnest component in the system
@@ -15,11 +15,11 @@ Windows ships — no runtime, no framework, no installer dependencies.
 ## What it shows
 
 - **Tray icon** — the day's note (drawn to match your light/dark taskbar),
-  turning into a red badge with a count when something needs you: untriaged
-  agent todos in the inbox, or an open PR with failing checks. An orange
+  turning into a red badge with a count when something needs you: an agent
+  proposal awaiting triage, or an open PR with failing checks. An orange
   warning triangle means the widget itself could not load the day.
-- **Agent inbox** — todos filed by agents, awaiting your triage.
-- **Open todos** — your own open obligations, any day.
+- **Open todos** — every open todo in one list, yours and the agents'. An
+  agent proposal still awaiting your verdict is marked `*` and coloured.
 - **Today** — the day's entries with time, source, and live PR status on
   entries that reference a PR. Closed todos are checked and dimmed.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
@@ -29,7 +29,8 @@ Windows ships — no runtime, no framework, no installer dependencies.
 | Where | Action |
 |---|---|
 | Tray icon | Left or right click opens the menu |
-| Inbox / todo row → submenu | **Mark done** (`daylog done <id>` — dismisses an inbox proposal or finishes your own), **Open PR** when the entry references one |
+| Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
+| Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders; **Exit** quits the widget |
 

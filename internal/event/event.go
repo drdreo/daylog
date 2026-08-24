@@ -26,8 +26,26 @@ const (
 	TypeTodo       = "todo"
 	TypeDone       = "done"
 	TypeReclassify = "reclassify"
+	TypeTriage     = "triage"
 	TypeTransition = "transition"
 )
+
+// Triage verdicts on an agent-filed todo (§5.2). Accepting adopts it as
+// the human's own without changing its type; declining hides it from every
+// rendered view. Both are append-only, so a later verdict reverses an
+// earlier one.
+const (
+	VerdictAccepted = "accepted"
+	VerdictDeclined = "declined"
+)
+
+// ValidateVerdict guards the triage vocabulary at write time.
+func ValidateVerdict(v string) error {
+	if v != VerdictAccepted && v != VerdictDeclined {
+		return fmt.Errorf("invalid verdict %q: must be %s or %s", v, VerdictAccepted, VerdictDeclined)
+	}
+	return nil
+}
 
 // AddableTypes are the types a producer may pass to `daylog add`.
 var AddableTypes = []string{TypeWork, TypeSidequest, TypeNote, TypeTodo}

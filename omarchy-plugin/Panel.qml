@@ -5,9 +5,9 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Daylog bar widget: one icon, one panel. The icon lights up when the agent
-// inbox has untriaged todos or an open PR has failing checks — the two
-// "needs me" signals. The panel is the day view: entries, todos, inbox, PRs.
+// Daylog bar widget: one icon, one panel. The icon lights up when an agent
+// proposal is still awaiting triage or an open PR has failing checks — the
+// two "needs me" signals. The panel is the day view: todos, entries, PRs.
 Panel {
   id: root
   moduleName: "drdreo.daylog"
@@ -26,14 +26,13 @@ Panel {
 
   // ---------------------------------------------------------------- cursor
   //
-  // One flat cursor over every row in visual order — inbox, open todos,
-  // today's entries, then PRs — addressed by a global index so arrow keys
+  // One flat cursor over every row in visual order — open todos, today's
+  // entries, then PRs — addressed by a global index so arrow keys
   // walk the whole panel. Rows compute their own index from these offsets.
   property bool cursorActive: false
   property int cursorIndex: -1
 
-  readonly property int inboxOffset: 0
-  readonly property int todosOffset: store.agentInbox.length
+  readonly property int todosOffset: 0
   readonly property int entriesOffset: todosOffset + store.openTodos.length
   readonly property int prsOffset: entriesOffset + store.entries.length
   readonly property int rowCount: prsOffset + store.prs.length
@@ -54,7 +53,6 @@ Panel {
   function selectedRow() {
     var i = cursorIndex
     if (!cursorActive || i < 0 || i >= rowCount) return null
-    if (i < todosOffset) return { kind: "entry", data: store.agentInbox[i - inboxOffset] }
     if (i < entriesOffset) return { kind: "entry", data: store.openTodos[i - todosOffset] }
     if (i < prsOffset) return { kind: "entry", data: store.entries[i - entriesOffset] }
     return { kind: "pr", data: store.prs[i - prsOffset] }
@@ -83,15 +81,26 @@ Panel {
     openUrl(selectedUrl())
   }
 
-  // d / x: close the selected todo — dismissing an inbox proposal or
-  // finishing one of your own. Only open todos respond; everything else
-  // is a record, not an obligation (there is nothing to "do" to it).
+  // d: close the selected todo — finishing one of your own, or an agent's
+  // proposal you did act on. Only open todos respond; everything else is a
+  // record, not an obligation (there is nothing to "do" to it).
   function dismissSelected() {
     var row = selectedRow()
     if (!row || row.kind !== "entry" || !row.data) return
     var e = row.data
     if (String(e.type) !== "todo" || e.done === true) return
     store.markDone(String(e.id))
+  }
+
+  // a / x: rule on the selected agent proposal — accept adopts it as yours,
+  // decline drops it from every view. Only untriaged rows respond; a todo
+  // you already own has nothing left to decide.
+  function triageSelected(verdict) {
+    var row = selectedRow()
+    if (!row || row.kind !== "entry" || !row.data) return
+    var e = row.data
+    if (!store.needsTriageId(String(e.id))) return
+    store.triage(String(e.id), verdict)
   }
 
   // Keep the cursor's row inside the viewport as it walks.
@@ -112,7 +121,7 @@ Panel {
     }
     return false
   }
-  readonly property bool needsAttention: store.agentInbox.length > 0 || prFailing
+  readonly property bool needsAttention: store.needsTriage.length > 0 || prFailing
 
   readonly property bool prsStale: {
     if (store.prsFetchedAt === "") return false
@@ -139,7 +148,7 @@ Panel {
     if (store.day === null) return "No data yet"
     var parts = [store.date]
     parts.push(store.entries.length + (store.entries.length === 1 ? " entry" : " entries"))
-    var open = store.openTodos.length + store.agentInbox.length
+    var open = store.openTodos.length
     if (open > 0) parts.push(open + " open todo" + (open === 1 ? "" : "s"))
     return parts.join(" · ")
   }
@@ -162,7 +171,7 @@ Panel {
 
   function footerText() {
     if (store.polling) return "Polling GitHub…"
-    var hints = "↑↓ · ⏎ open · d done · r refresh · p poll"
+    var hints = "↑↓ · ⏎ open · d done · a accept · x decline · r refresh · p poll"
     if (store.updatedMs <= 0) return hints
     return "Updated " + Qt.formatTime(new Date(store.updatedMs), "HH:mm") + " · " + hints
   }
@@ -244,6 +253,8 @@ Panel {
         else if (t === "p" || t === "P") store.pollNow()
         else if (t === "o" || t === "O") root.activateSelected()
         else if (t === "d" || t === "D") root.dismissSelected()
+        else if (t === "a" || t === "A") root.triageSelected("accept")
+        else if (t === "x" || t === "X") root.triageSelected("decline")
       }
 
       Flickable {
@@ -294,34 +305,7 @@ Panel {
             }
           }
 
-          // ---------- Agent inbox: proposals awaiting triage ----------
-          Column {
-            visible: store.agentInbox.length > 0
-            width: parent.width
-            spacing: Style.spacing.md
-
-            PanelSectionHeader {
-              width: parent.width
-              text: "AGENT INBOX (" + store.agentInbox.length + " to triage)"
-              foreground: root.urgent
-              fontFamily: root.fontFamily
-            }
-
-            Repeater {
-              model: store.agentInbox
-
-              EntryRow {
-                required property var modelData
-                required property int index
-                width: parent.width
-                entry: modelData
-                accent: true
-                rowIndex: root.inboxOffset + index
-              }
-            }
-          }
-
-          // ---------- Open todos ----------
+          // ---------- Open todos: one list, untriaged proposals accented ----------
           Column {
             visible: store.openTodos.length > 0
             width: parent.width
@@ -329,8 +313,10 @@ Panel {
 
             PanelSectionHeader {
               width: parent.width
-              text: "OPEN TODOS"
-              foreground: root.foreground
+              text: store.needsTriage.length > 0
+                    ? "OPEN TODOS (" + store.needsTriage.length + " awaiting triage)"
+                    : "OPEN TODOS"
+              foreground: store.needsTriage.length > 0 ? root.urgent : root.foreground
               fontFamily: root.fontFamily
             }
 
@@ -342,6 +328,7 @@ Panel {
                 required property int index
                 width: parent.width
                 entry: modelData
+                accent: store.needsTriageId(modelData.id)
                 rowIndex: root.todosOffset + index
               }
             }

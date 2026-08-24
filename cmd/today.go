@@ -24,8 +24,10 @@ var todayCmd = &cobra.Command{
 	Use:   "today [DATE]",
 	Short: "Show the folded view of a day (default: today)",
 	Long: `Fold the event history into the day's derived state. --json emits the
-consumer contract: {date, entries, open_todos, agent_inbox} with
-reclassifications and closures already applied — consumers stay dumb.
+consumer contract: {date, entries, open_todos, needs_triage} with
+reclassifications, closures and triage verdicts already applied — consumers
+stay dumb. open_todos holds every open todo; needs_triage filters it down to
+the agent proposals still awaiting a verdict.
 
 Filters: --type and --source narrow entries; --source matches either the
 full identity (agent:claude) or the namespace (agent).`,

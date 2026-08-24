@@ -135,8 +135,8 @@ function Get-HeroMeta($Day) {
     $parts = @("$($Day.date)")
     if ($entries.Count -eq 1) { $parts += '1 entry' } else { $parts += "$($entries.Count) entries" }
     $open = 0
+    # open_todos already holds every open todo; needs_triage filters it.
     if ($Day.open_todos) { $open += @($Day.open_todos).Count }
-    if ($Day.agent_inbox) { $open += @($Day.agent_inbox).Count }
     if ($open -eq 1) { $parts += '1 open todo' } elseif ($open -gt 1) { $parts += "$open open todos" }
     return $parts -join ' · '
 }
@@ -213,15 +213,31 @@ function Set-TrayIcon {
 
 # --------------------------------------------------------------------- menu
 #
-# One flat menu mirroring the SwiftBar plugin's sections: header, agent inbox,
+# One flat menu mirroring the SwiftBar plugin's sections: header, open todos,
 # open todos, today, open PRs, actions. Rows that reference a PR open it on
-# click; inbox/todo rows carry a submenu with Mark done + Open PR.
+# click; todo rows carry a submenu with triage verdicts, Mark done + Open PR.
 
 # Shared handlers: per-row data travels in the item's Tag, never in a closure.
 $script:OpenUrlHandler = { param($s, $e) if ($s.Tag) { Start-Process $s.Tag } }
 $script:MarkDoneHandler = {
     param($s, $e)
     try { [void](Invoke-Daylog @('done', "$($s.Tag)")) }
+    catch { $script:Notify.ShowBalloonTip(4000, 'Daylog', "$($_.Exception.Message)", 'Error') }
+    Update-Widget
+}
+# Triage verdicts on an agent proposal: accept adopts it, decline drops it
+# from every view. Same single write path as everything else. A click is the
+# human ruling, so the identity is stated outright rather than inherited from
+# whatever $DAYLOG_SOURCE the tray was launched with.
+$script:AcceptHandler = {
+    param($s, $e)
+    try { [void](Invoke-Daylog @('accept', "$($s.Tag)", '--source', 'human:widget')) }
+    catch { $script:Notify.ShowBalloonTip(4000, 'Daylog', "$($_.Exception.Message)", 'Error') }
+    Update-Widget
+}
+$script:DeclineHandler = {
+    param($s, $e)
+    try { [void](Invoke-Daylog @('decline', "$($s.Tag)", '--source', 'human:widget')) }
     catch { $script:Notify.ShowBalloonTip(4000, 'Daylog', "$($_.Exception.Message)", 'Error') }
     Update-Widget
 }
@@ -258,14 +274,28 @@ function Add-Row {
     return $it
 }
 
-# A row for an inbox/open-todo entry: the submenu carries the two actions the
-# sibling widgets bind to keys — mark done, and open the referenced PR.
-function Add-TodoRow($Menu, $Entry) {
+# One open-todo row. Untriaged agent proposals are marked in place (rather
+# than exiled to a second list) and get the accept/decline verdict pair;
+# everything else just gets the usual lifecycle actions.
+function Add-TodoRow($Menu, $Entry, [bool]$Untriaged) {
     $pr = $Entry.pr
     $alarming = $pr -and ("$($pr.checks)" -eq 'failing')
-    $it = New-Object System.Windows.Forms.ToolStripMenuItem((Get-MenuText (Truncate (Get-EntryText $Entry $false) 70)))
-    $it.ToolTipText = Get-EntryTooltip $Entry
-    if ($alarming) { $it.ForeColor = $script:Urgent }
+    $label = Truncate (Get-EntryText $Entry $false) 70
+    if ($Untriaged) { $label = "* $label" }
+    $it = New-Object System.Windows.Forms.ToolStripMenuItem((Get-MenuText $label))
+    $it.ToolTipText = if ($Untriaged) { 'Awaiting triage — ' + (Get-EntryTooltip $Entry) } else { Get-EntryTooltip $Entry }
+    if ($alarming -or $Untriaged) { $it.ForeColor = $script:Urgent }
+    if ($Untriaged) {
+        $accept = New-Object System.Windows.Forms.ToolStripMenuItem('Accept')
+        $accept.Tag = "$($Entry.id)"
+        $accept.Add_Click($script:AcceptHandler)
+        [void]$it.DropDownItems.Add($accept)
+        $decline = New-Object System.Windows.Forms.ToolStripMenuItem('Decline')
+        $decline.Tag = "$($Entry.id)"
+        $decline.Add_Click($script:DeclineHandler)
+        [void]$it.DropDownItems.Add($decline)
+        [void]$it.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    }
     $done = New-Object System.Windows.Forms.ToolStripMenuItem('Mark done')
     $done.Tag = "$($Entry.id)"
     $done.Add_Click($script:MarkDoneHandler)
@@ -289,7 +319,11 @@ function Build-Menu {
 
     $entries   = if ($Day -and $Day.entries)     { @($Day.entries) }     else { @() }
     $openTodos = if ($Day -and $Day.open_todos)  { @($Day.open_todos) }  else { @() }
-    $inbox     = if ($Day -and $Day.agent_inbox) { @($Day.agent_inbox) } else { @() }
+    $needsTriage = if ($Day -and $Day.needs_triage) { @($Day.needs_triage) } else { @() }
+    # needs_triage filters open_todos rather than partitioning it — look up by
+    # id when rendering, or the same todo draws twice.
+    $untriagedIds = @{}
+    foreach ($t in $needsTriage) { $untriagedIds["$($t.id)"] = $true }
     $prs       = if ($Day -and $Day.prs)         { @($Day.prs) }         else { @() }
 
     $stale = $false
@@ -311,18 +345,13 @@ function Build-Menu {
             -Url 'https://github.com/drdreo/daylog')
     }
 
-    # ---------- agent inbox: proposals awaiting triage ----------
-    if ($inbox.Count -gt 0) {
-        Add-Separator $m
-        (Add-Row $m "AGENT INBOX ($($inbox.Count) to triage)" -Color $script:Urgent -Header).Enabled = $false
-        foreach ($e in $inbox) { Add-TodoRow $m $e }
-    }
-
-    # ---------- open todos ----------
+    # ---------- open todos: one list, untriaged proposals marked ----------
     if ($openTodos.Count -gt 0) {
         Add-Separator $m
-        (Add-Row $m 'OPEN TODOS' -Header).Enabled = $false
-        foreach ($e in $openTodos) { Add-TodoRow $m $e }
+        $heading = if ($needsTriage.Count -gt 0) { "OPEN TODOS ($($needsTriage.Count) awaiting triage)" } else { 'OPEN TODOS' }
+        $color = if ($needsTriage.Count -gt 0) { $script:Urgent } else { $null }
+        (Add-Row $m $heading -Color $color -Header).Enabled = $false
+        foreach ($e in $openTodos) { Add-TodoRow $m $e ($untriagedIds.ContainsKey("$($e.id)")) }
     }
 
     # ---------- today's entries ----------
@@ -379,10 +408,10 @@ function Update-Widget {
         catch { $errText = '`daylog today --json` failed: ' + $_.Exception.Message }
     }
 
-    $inbox = if ($day -and $day.agent_inbox) { @($day.agent_inbox) } else { @() }
+    $needsTriage = if ($day -and $day.needs_triage) { @($day.needs_triage) } else { @() }
     $prs   = if ($day -and $day.prs)         { @($day.prs) }         else { @() }
     $failing = @($prs | Where-Object { "$($_.checks)" -eq 'failing' }).Count
-    $attention = $inbox.Count + $failing
+    $attention = $needsTriage.Count + $failing
 
     if ($errText -and -not $day) { Set-TrayIcon 'error' 0 }
     elseif ($attention -gt 0)    { Set-TrayIcon 'attention' $attention }

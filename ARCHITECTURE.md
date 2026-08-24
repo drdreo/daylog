@@ -134,9 +134,16 @@ the human to review:
 
 The `note` type remains in the schema for human quick-capture and the EOD summarizer, but is intentionally excluded from the agent vocabulary to keep agent noise out of the log. Where a harness supports deterministic hooks (Claude Code's Stop hook), a backstop checks that a task entry was logged and reminds the agent if not — reminding rather than auto-generating, because an auto-generated TLDR ("edited 3 files") defeats the purpose of delegating the summarization.
 
-### 5.2 Agent todos are a review queue
+### 5.2 Agent todos are proposals
 
-Agent-filed todos are proposals, not commitments: the `today` view renders `source: agent:*` todos separately from `source: human:*` ones, as an inbox awaiting triage. Triage verbs: accept (adopt it as yours, e.g. `reclassify` with `meta.triaged: true`) or dismiss (`done` with a won't-do note). Agent todos left untriaged for more than a day or two are surfaced prominently — an ignored review queue silently recreates the lost-context problem the system exists to solve.
+Agent-filed todos are proposals, not commitments — but they are still todos, and they live in the same list as your own. Splitting them into a second "inbox" bucket bought noise isolation at the price of a second list to work from, and of every consumer rendering the same todo twice; `open_todos` now holds every open todo and `needs_triage` *filters* it down to the agent-filed ones still awaiting a verdict.
+
+Triage is a `triage` event carrying `meta.verdict`, and it is the human's call — the CLI rejects a verdict from an `agent:*` source, or a self-approving agent would make the queue ceremonial:
+
+- **accept** (`daylog accept <id>`) — adopt it as yours. The type is unchanged and it stays in `open_todos`; accepting only clears the awaiting-triage flag so the widget stops nagging.
+- **decline** (`daylog decline <id> --note "why"`) — reject it. The event stays in the ledger, but the todo drops out of every rendered view: it was never yours to carry.
+
+Both are append-only, so the last verdict wins and a decline is reversible by a later accept. Proposals left untriaged are surfaced prominently — an ignored review queue silently recreates the lost-context problem the system exists to solve.
 
 ## 6. Producers
 

@@ -51,8 +51,8 @@ func TestFoldReclassifyAndDone(t *testing.T) {
 	if !day.Entries[1].Done || day.Entries[1].DoneNote != "rotated it" {
 		t.Errorf("done not applied: %+v", day.Entries[1])
 	}
-	if len(day.OpenTodos) != 0 || len(day.AgentInbox) != 0 {
-		t.Errorf("closed todo still listed open: todos=%v inbox=%v", day.OpenTodos, day.AgentInbox)
+	if len(day.OpenTodos) != 0 || len(day.NeedsTriage) != 0 {
+		t.Errorf("closed todo still listed open: todos=%v needs_triage=%v", day.OpenTodos, day.NeedsTriage)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestFoldLastReclassifyWins(t *testing.T) {
 	}
 }
 
-func TestFoldTodosSpanDaysAndSplitByNamespace(t *testing.T) {
+func TestFoldTodosSpanDaysAndShareOneList(t *testing.T) {
 	old := ev("2026-08-20", event.TypeTodo, "human:cli", "renew the cert")
 	agent := ev("2026-08-20", event.TypeTodo, "agent:codex", "review the retry logic")
 	today := ev("2026-08-23", event.TypeWork, "agent:claude", "shipped the parser")
@@ -81,11 +81,82 @@ func TestFoldTodosSpanDaysAndSplitByNamespace(t *testing.T) {
 	if len(day.Entries) != 1 || day.Entries[0].TLDR != "shipped the parser" {
 		t.Errorf("entries should only cover the requested day: %+v", day.Entries)
 	}
-	if len(day.OpenTodos) != 1 || day.OpenTodos[0].TLDR != "renew the cert" {
-		t.Errorf("human todo from an earlier day should stay open: %+v", day.OpenTodos)
+	// One list to work from, regardless of who filed it.
+	if len(day.OpenTodos) != 2 {
+		t.Errorf("both todos should be open, got %d: %+v", len(day.OpenTodos), day.OpenTodos)
 	}
-	if len(day.AgentInbox) != 1 || day.AgentInbox[0].TLDR != "review the retry logic" {
-		t.Errorf("agent todo belongs in the inbox: %+v", day.AgentInbox)
+	// needs_triage filters that list, it does not partition it.
+	if len(day.NeedsTriage) != 1 || day.NeedsTriage[0].TLDR != "review the retry logic" {
+		t.Errorf("only the untriaged agent todo needs a verdict: %+v", day.NeedsTriage)
+	}
+}
+
+// The bug this whole change exists to kill: an open todo filed today used
+// to appear in the work log AND the todo list, rendering twice in every
+// widget. The work log records what happened; an open todo hasn't.
+func TestFoldOpenTodoStaysOutOfTheWorkLog(t *testing.T) {
+	todo := ev("2026-08-23", event.TypeTodo, "agent:claude", "plan the ad loop flow")
+	work := ev("2026-08-23", event.TypeWork, "agent:claude", "shipped the parser")
+
+	day := Fold([]event.Event{todo, work}, date("2026-08-23"), time.Now())
+
+	if len(day.Entries) != 1 || day.Entries[0].TLDR != "shipped the parser" {
+		t.Errorf("open todo must not appear in the work log: %+v", day.Entries)
+	}
+	if len(day.OpenTodos) != 1 {
+		t.Errorf("open todo should still be listed once: %+v", day.OpenTodos)
+	}
+
+	// Closing it makes it a record of something that happened, so it earns
+	// its place in the day's log.
+	done := ev("2026-08-23", event.TypeDone, "human:cli", "planned it")
+	done.Parent = &todo.ID
+	day = Fold([]event.Event{todo, work, done}, date("2026-08-23"), time.Now())
+	if len(day.Entries) != 2 {
+		t.Errorf("closed todo belongs in the work log: %+v", day.Entries)
+	}
+	if len(day.OpenTodos) != 0 {
+		t.Errorf("closed todo should leave the todo list: %+v", day.OpenTodos)
+	}
+}
+
+func TestFoldTriageVerdicts(t *testing.T) {
+	todo := ev("2026-08-22", event.TypeTodo, "agent:claude", "consider caching embeddings")
+
+	accept := ev("2026-08-23", event.TypeTriage, "human:cli", "accepted")
+	accept.Parent = &todo.ID
+	accept.Meta = map[string]any{"verdict": event.VerdictAccepted}
+
+	day := Fold([]event.Event{todo, accept}, date("2026-08-23"), time.Now())
+	if len(day.OpenTodos) != 1 {
+		t.Errorf("accepting keeps the todo open: %+v", day.OpenTodos)
+	}
+	if len(day.NeedsTriage) != 0 {
+		t.Errorf("accepted todo should stop nagging: %+v", day.NeedsTriage)
+	}
+	if len(day.Entries) != 0 {
+		t.Errorf("triage is bookkeeping, not a log entry: %+v", day.Entries)
+	}
+
+	// Declining hides it from every view — the ledger keeps it, the UI does not.
+	decline := ev("2026-08-24", event.TypeTriage, "human:cli", "declined")
+	decline.Parent = &todo.ID
+	decline.Meta = map[string]any{"verdict": event.VerdictDeclined}
+
+	day = Fold([]event.Event{todo, accept, decline}, date("2026-08-24"), time.Now())
+	if len(day.OpenTodos) != 0 || len(day.NeedsTriage) != 0 || len(day.Entries) != 0 {
+		t.Errorf("declined todo must not render: todos=%v triage=%v entries=%v",
+			day.OpenTodos, day.NeedsTriage, day.Entries)
+	}
+
+	// Append-only means reversible: a later accept takes it back.
+	reAccept := ev("2026-08-25", event.TypeTriage, "human:cli", "accepted after all")
+	reAccept.Parent = &todo.ID
+	reAccept.Meta = map[string]any{"verdict": event.VerdictAccepted}
+
+	day = Fold([]event.Event{todo, accept, decline, reAccept}, date("2026-08-25"), time.Now())
+	if len(day.OpenTodos) != 1 {
+		t.Errorf("last verdict wins, so it should be open again: %+v", day.OpenTodos)
 	}
 }
 
@@ -122,7 +193,7 @@ func TestNotePromotedToTodoIsTracked(t *testing.T) {
 	}
 
 	// Resolutions (used by CLI target resolution) must agree
-	reclassified, _ := Resolutions([]event.Event{note, rec, rev})
+	reclassified, _, _ := Resolutions([]event.Event{note, rec, rev})
 	if reclassified[note.ID] != "note" {
 		t.Errorf("effective type after revert = %q, want note", reclassified[note.ID])
 	}
@@ -135,8 +206,8 @@ func TestReclassifiedTodoLeavesQueue(t *testing.T) {
 	rec.Meta = map[string]any{"to": "work", "triaged": true}
 
 	day := Fold([]event.Event{todo, rec}, date("2026-08-23"), time.Now())
-	if len(day.AgentInbox) != 0 {
-		t.Errorf("reclassified todo should leave the inbox: %+v", day.AgentInbox)
+	if len(day.NeedsTriage) != 0 {
+		t.Errorf("reclassified todo should leave the inbox: %+v", day.NeedsTriage)
 	}
 }
 

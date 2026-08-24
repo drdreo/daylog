@@ -28,8 +28,8 @@ func TestJoinGHDecoratesByRefEquality(t *testing.T) {
 			{ID: "B", Refs: []string{"gh:pr:o/r#999"}}, // not in snapshot
 			{ID: "C", Refs: []string{}},
 		},
-		OpenTodos:  []Entry{{ID: "T", Refs: []string{"gh:pr:o/r#3"}}},
-		AgentInbox: []Entry{},
+		OpenTodos:   []Entry{{ID: "T", Refs: []string{"gh:pr:o/r#3"}}},
+		NeedsTriage: []Entry{},
 	}
 	JoinGH(&d, testSnap())
 
