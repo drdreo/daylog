@@ -137,6 +137,26 @@ Panel {
     return isNaN(t.getTime()) ? "" : Qt.formatTime(t, "HH:mm")
   }
 
+  // A closed todo takes its place in the log when it was closed, so that is
+  // the clock its row leads with — the filing time is the other half of the
+  // story, not the headline.
+  function logClockOf(e) {
+    if (!e) return ""
+    return clockOf(String(e.type) === "todo" && e.done_ts ? e.done_ts : e.ts)
+  }
+
+  // When a closed todo was originally taken on. Carries the date once the
+  // todo outlived its filing day, so "filed 09:12" cannot read as this morning.
+  function filedOf(e) {
+    if (!e || String(e.type) !== "todo" || !e.done_ts) return ""
+    var filed = new Date(String(e.ts))
+    if (isNaN(filed.getTime())) return ""
+    var closed = new Date(String(e.done_ts))
+    if (!isNaN(closed.getTime()) && filed.toDateString() !== closed.toDateString())
+      return Qt.formatDateTime(filed, "MMM d HH:mm")
+    return Qt.formatTime(filed, "HH:mm")
+  }
+
   // agent:claude → claude, human:cli → cli, poller:gh → gh
   function shortSource(source) {
     var text = String(source || "")
@@ -155,8 +175,10 @@ Panel {
 
   function entryTooltip(e) {
     if (!e) return ""
-    var parts = [clockOf(e.ts) + " · " + String(e.source) + " · " + String(e.type)]
+    var parts = [logClockOf(e) + " · " + String(e.source) + " · " + String(e.type)]
     if (e.original_type) parts.push("was " + e.original_type)
+    var filed = filedOf(e)
+    if (filed) parts.push("filed " + filed)
     if (e.refs && e.refs.length > 0) parts.push(e.refs.join(", "))
     if (e.done_note) parts.push("closed: " + e.done_note)
     parts.push(String(e.tldr))
@@ -450,7 +472,7 @@ Panel {
     Text {
       id: entryTime
       visible: entryRow.showTime
-      text: entryRow.entry ? root.clockOf(entryRow.entry.ts) : ""
+      text: root.logClockOf(entryRow.entry)
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -465,6 +487,11 @@ Panel {
         if (!entryRow.entry) return ""
         var text = String(entryRow.entry.tldr)
         if (entryRow.pr) text += "  [" + store.prStatusLabel(entryRow.pr) + "]"
+        // Both moments on the row itself: the leading clock is when the todo
+        // was finished, so the line still has to say when it was taken on —
+        // a todo carried for three days should say so without a hover.
+        var filed = root.filedOf(entryRow.entry)
+        if (filed) text += "  (filed " + filed + ")"
         return text
       }
       color: entryRow.accent ? root.foreground

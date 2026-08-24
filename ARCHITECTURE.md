@@ -110,10 +110,14 @@ The CLI enforces a 280-character limit on `tldr` at write time, rejecting (not t
 
 One markdown block, written once and pasted verbatim into each agent's global config — `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex, pi's equivalent. Agent identity is deliberately *not* in the prompt: each harness's launch wrapper sets `DAYLOG_SOURCE=agent:<name>` once, so `source` is correct by construction rather than by agent self-report.
 
+The instruction is written around a materiality bar rather than a completion trigger. "Log when you finish a task" is the obvious phrasing and the wrong one: an agent finishes a dozen things an hour, most of them questions answered and files read, and a log that records all of them is one nobody opens. The bar is what the task *left behind* — a merge, a diagnosis, a conclusion, a changed system — and the tie-break is explicit: when it is borderline, do not log. A missing entry costs nothing, because the day view is a summary and never claimed to be an audit trail.
+
 ```markdown
 ## Work logging (daylog)
 
-When you complete a task — not after every message — run:
+When a task leaves something behind — code committed, pushed or merged; a
+PR opened or landed; a bug diagnosed or fixed; research or a review that
+reached a conclusion; infrastructure, schema or data changed — run:
 
     daylog add --type <work|sidequest> "one-line TLDR, ≤280 chars"
 
@@ -125,10 +129,14 @@ the human to review:
 - Add `--ref '#142'` (or a Linear/Jira id) for any PR or issue involved.
 - `work` = the task you were asked to do; `sidequest` = anything you did
   that wasn't the original ask. When unsure, use `sidequest`.
-- Log failures and dead ends too: "attempted X, blocked by Y" is valid.
+- Do NOT log: questions answered, code explained or read, trivial edits,
+  progress updates, or work whose only artifact is the conversation. When
+  it is borderline, do not log — a log full of noise stops being read.
+- A substantial attempt that failed is worth logging ("attempted X,
+  blocked by Y"); a trivial one is not.
 - Todos go to the human's review queue. Do not act on them, track them,
   or file them for yourself — filing one ends your involvement with it.
-- No thinking-out-loud or observations: only concrete actions.
+  Triage (`accept`/`decline`) is the human's alone.
 - One entry per completed task. Never write to daylog's data files directly.
 ```
 
@@ -142,6 +150,8 @@ Triage is a `triage` event carrying `meta.verdict`, and it is the human's call �
 
 - **accept** (`daylog accept <id>`) — adopt it as yours. The type is unchanged and it stays in `open_todos`; accepting only clears the awaiting-triage flag so the widget stops nagging.
 - **decline** (`daylog decline <id> --note "why"`) — reject it. The event stays in the ledger, but the todo drops out of every rendered view: it was never yours to carry.
+
+A todo is an obligation until it is closed, and only then a record of something that happened — so a closed todo enters the work log on the day it was *closed*, not the day it was filed. That is also the only placement under which a todo carried across days stays visible: filed under its creation day it would drop out of every view the moment it left `open_todos`. The fold keeps both moments (`ts` filed, `done_ts` closed) rather than collapsing them, because "finished at 17:40, carried since Tuesday" is the whole point of having tracked it.
 
 Both are append-only, so the last verdict wins and a decline is reversible by a later accept. Proposals left untriaged are surfaced prominently — an ignored review queue silently recreates the lost-context problem the system exists to solve.
 

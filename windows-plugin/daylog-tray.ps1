@@ -81,6 +81,26 @@ function Get-ShortDateTime($Ts) {
     try { return ([System.DateTimeOffset]"$Ts").LocalDateTime.ToString('MMM d HH:mm') } catch { return '' }
 }
 
+# A closed todo takes its place in the log when it was closed, so that is the
+# clock its row leads with — the filing time is the other half of the story,
+# not the headline.
+function Get-LogClock($E) {
+    if ("$($E.type)" -eq 'todo' -and $E.done_ts) { return (Get-Clock $E.done_ts) }
+    return (Get-Clock $E.ts)
+}
+
+# When a closed todo was originally taken on. Carries the date once the todo
+# outlived its filing day, so "filed 09:12" cannot read as this morning.
+function Get-FiledStamp($E) {
+    if ("$($E.type)" -ne 'todo' -or -not $E.done_ts) { return '' }
+    try {
+        $filed = ([System.DateTimeOffset]"$($E.ts)").LocalDateTime
+        $closed = ([System.DateTimeOffset]"$($E.done_ts)").LocalDateTime
+        if ($filed.Date -ne $closed.Date) { return $filed.ToString('MMM d HH:mm') }
+        return $filed.ToString('HH:mm')
+    } catch { return '' }
+}
+
 # agent:claude → claude, human:cli → cli, poller:gh → gh
 function Get-ShortSource($Source) {
     $text = "$Source"
@@ -108,8 +128,10 @@ function Get-PrStatusLabel($Pr) {
 
 function Get-EntryTooltip($E) {
     if (-not $E) { return '' }
-    $parts = @((Get-Clock $E.ts) + ' · ' + "$($E.source)" + ' · ' + "$($E.type)")
+    $parts = @((Get-LogClock $E) + ' · ' + "$($E.source)" + ' · ' + "$($E.type)")
     if ($E.original_type) { $parts += "was $($E.original_type)" }
+    $filed = Get-FiledStamp $E
+    if ($filed) { $parts += "filed $filed" }
     if ($E.refs -and @($E.refs).Count -gt 0) { $parts += (@($E.refs) -join ', ') }
     if ($E.done_note) { $parts += "closed: $($E.done_note)" }
     $parts += "$($E.tldr)"
@@ -126,7 +148,12 @@ function Get-EntryGlyph($E) {
 function Get-EntryText($E, [bool]$WithTime) {
     $text = (Get-EntryGlyph $E) + "$($E.tldr)"
     if ($E.pr) { $text += '  [' + (Get-PrStatusLabel $E.pr) + ']' }
-    if ($WithTime) { $text = (Get-Clock $E.ts) + '  ' + $text }
+    # Both moments on the row itself: the leading clock is when the todo was
+    # finished, so the line still has to say when it was taken on — a todo
+    # carried for three days should say so without a hover.
+    $filed = Get-FiledStamp $E
+    if ($filed) { $text += "  (filed $filed)" }
+    if ($WithTime) { $text = (Get-LogClock $E) + '  ' + $text }
     return $text
 }
 

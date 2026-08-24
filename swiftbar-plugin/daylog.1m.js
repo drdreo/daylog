@@ -89,6 +89,25 @@ function shortDateTime(ts) {
   return months[t.getMonth()] + ' ' + t.getDate() + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())
 }
 
+// A closed todo takes its place in the log when it was closed, so that is
+// the clock its row leads with — the filing time is the other half of the
+// story, not the headline.
+function logClockOf(e) {
+  return clockOf(String(e.type) === 'todo' && e.done_ts ? e.done_ts : e.ts)
+}
+
+// When a closed todo was originally taken on. Carries the date once the
+// todo outlived its filing day, so "filed 09:12" cannot read as this morning.
+function filedOf(e) {
+  if (String(e.type) !== 'todo' || !e.done_ts) return ''
+  var filed = new Date(String(e.ts))
+  if (isNaN(filed.getTime())) return ''
+  var closed = new Date(String(e.done_ts))
+  if (!isNaN(closed.getTime()) && filed.toDateString() !== closed.toDateString())
+    return shortDateTime(e.ts)
+  return clockOf(e.ts)
+}
+
 // agent:claude → claude, human:cli → cli, poller:gh → gh
 function shortSource(source) {
   var text = String(source || '')
@@ -112,8 +131,10 @@ function prStatusLabel(pr) {
 
 function entryTooltip(e) {
   if (!e) return ''
-  var parts = [clockOf(e.ts) + ' · ' + String(e.source) + ' · ' + String(e.type)]
+  var parts = [logClockOf(e) + ' · ' + String(e.source) + ' · ' + String(e.type)]
   if (e.original_type) parts.push('was ' + e.original_type)
+  var filed = filedOf(e)
+  if (filed) parts.push('filed ' + filed)
   if (e.refs && e.refs.length > 0) parts.push(e.refs.join(', '))
   if (e.done_note) parts.push('closed: ' + e.done_note)
   parts.push(String(e.tldr))
@@ -129,7 +150,12 @@ function entryGlyph(e) {
 function entryText(e, withTime) {
   var text = entryGlyph(e) + String(e.tldr)
   if (e.pr) text += '  [' + prStatusLabel(e.pr) + ']'
-  if (withTime) text = clockOf(e.ts) + '  ' + text
+  // Both moments on the row itself: the leading clock is when the todo was
+  // finished, so the line still has to say when it was taken on — a todo
+  // carried for three days should say so without a hover.
+  var filed = filedOf(e)
+  if (filed) text += '  (filed ' + filed + ')'
+  if (withTime) text = logClockOf(e) + '  ' + text
   return text
 }
 

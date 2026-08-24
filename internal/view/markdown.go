@@ -15,7 +15,7 @@ var typeOrder = []string{event.TypeWork, event.TypeSidequest, event.TypeTodo, ev
 var typeHeadings = map[string]string{
 	event.TypeWork:       "Work",
 	event.TypeSidequest:  "Side quests",
-	event.TypeTodo:       "Todos filed today",
+	event.TypeTodo:       "Todos completed",
 	event.TypeNote:       "Notes",
 	event.TypeTransition: "Transitions",
 }
@@ -98,12 +98,17 @@ func entryLine(e Entry) string {
 		}
 		prefix = fmt.Sprintf("- [%s] ", mark)
 	}
-	b.WriteString(fmt.Sprintf("%s%s **%s** — %s", prefix, clock(e.TS), e.Source, e.TLDR))
+	b.WriteString(fmt.Sprintf("%s%s **%s** — %s", prefix, clock(logStamp(e)), e.Source, e.TLDR))
 	if len(e.Refs) > 0 {
 		b.WriteString(" (" + strings.Join(e.Refs, ", ") + ")")
 	}
 	if e.PR != nil {
 		b.WriteString(fmt.Sprintf(" [%s]", prStatusLabel(e.PR)))
+	}
+	// Both moments, not one: the leading clock is when the todo was finished,
+	// so the line still has to say when it was taken on.
+	if filed := filedStamp(e); filed != "" {
+		b.WriteString(fmt.Sprintf(" _(filed %s)_", filed))
 	}
 	if e.OriginalType != "" {
 		b.WriteString(fmt.Sprintf(" _(was %s)_", e.OriginalType))
@@ -131,6 +136,33 @@ func snapshotAge(fetchedAt, generatedAt string) string {
 		return fmt.Sprintf(" (STALE — fetched %s)", f.Local().Format("2006-01-02 15:04"))
 	}
 	return fmt.Sprintf(" (as of %s)", f.Local().Format("15:04"))
+}
+
+// logStamp is the timestamp the entry occupies in the day's log — the
+// closing time for a closed todo, matching where Fold placed it.
+func logStamp(e Entry) string {
+	if e.Type == event.TypeTodo && e.DoneTS != "" {
+		return e.DoneTS
+	}
+	return e.TS
+}
+
+// filedStamp is when a closed todo was originally filed, empty for
+// everything else. It carries the date too once the todo has outlived the
+// day it was filed on — "filed 09:12" would otherwise read as this morning.
+func filedStamp(e Entry) string {
+	if e.Type != event.TypeTodo || e.DoneTS == "" {
+		return ""
+	}
+	filed, err := time.Parse(time.RFC3339, e.TS)
+	if err != nil {
+		return ""
+	}
+	if closed, err := time.Parse(time.RFC3339, e.DoneTS); err == nil &&
+		filed.Format("2006-01-02") != closed.Format("2006-01-02") {
+		return filed.Format("Jan 2 15:04")
+	}
+	return filed.Format("15:04")
 }
 
 func clock(ts string) string {

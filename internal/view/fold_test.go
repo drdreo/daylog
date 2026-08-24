@@ -240,3 +240,94 @@ func TestMarkdownCheckboxesOnlyOnTodos(t *testing.T) {
 		}
 	}
 }
+
+// A todo filed days ago and finished today belongs in *today's* log,
+// stamped with when it was finished — and still says when it was taken on.
+// Before this, it showed the filing time, and a todo that outlived its
+// filing day vanished from every view once closed: too old for the day it
+// was filed under, no longer open enough for the todo list.
+func TestFoldClosedTodoLandsOnTheDayItWasClosed(t *testing.T) {
+	todo := ev("2026-08-20", event.TypeTodo, "human:cli", "renew the cert")
+	done := ev("2026-08-23", event.TypeDone, "human:cli", "renewed it")
+	done.Parent = &todo.ID
+	all := []event.Event{todo, done}
+
+	closing := Fold(all, date("2026-08-23"), time.Now())
+	if len(closing.Entries) != 1 {
+		t.Fatalf("closed todo belongs to the closing day: %+v", closing.Entries)
+	}
+	got := closing.Entries[0]
+	if got.TS != todo.TS {
+		t.Errorf("ts = %q, want the filing time %q", got.TS, todo.TS)
+	}
+	if got.DoneTS != done.TS {
+		t.Errorf("done_ts = %q, want the closing time %q", got.DoneTS, done.TS)
+	}
+	if filing := Fold(all, date("2026-08-20"), time.Now()); len(filing.Entries) != 0 {
+		t.Errorf("closed todo must not also sit in the filing day's log: %+v", filing.Entries)
+	}
+}
+
+// Entries arrive in ULID (filing) order, but a closed todo takes its place
+// in the log at its closing time, so the day has to be re-sequenced.
+func TestFoldOrdersClosedTodosByClosingTime(t *testing.T) {
+	todo := ev("2026-08-23", event.TypeTodo, "human:cli", "renew the cert")
+	work := ev("2026-08-23", event.TypeWork, "agent:claude", "shipped the parser")
+	done := ev("2026-08-23", event.TypeDone, "human:cli", "renewed it")
+	done.Parent = &todo.ID
+
+	day := Fold([]event.Event{todo, work, done}, date("2026-08-23"), time.Now())
+	if len(day.Entries) != 2 {
+		t.Fatalf("entries = %+v", day.Entries)
+	}
+	if day.Entries[0].TLDR != "shipped the parser" {
+		t.Errorf("the todo was filed first but closed last: %v, %v",
+			day.Entries[0].TLDR, day.Entries[1].TLDR)
+	}
+}
+
+func TestMarkdownShowsBothClosingAndFilingTime(t *testing.T) {
+	todo := ev("2026-08-20", event.TypeTodo, "human:cli", "renew the cert")
+	done := ev("2026-08-23", event.TypeDone, "human:cli", "renewed it")
+	done.Parent = &todo.ID
+
+	md := Markdown(Fold([]event.Event{todo, done}, date("2026-08-23"), time.Now()))
+	closed, filed := clock(done.TS), "Aug 20 "+clock(todo.TS)
+	if !strings.Contains(md, "- [x] "+closed) {
+		t.Errorf("line should lead with the closing time %s:\n%s", closed, md)
+	}
+	// The filing date, not just its clock: "filed 00:21" on a line inside
+	// the 23rd would read as this morning.
+	if !strings.Contains(md, "_(filed "+filed+")_") {
+		t.Errorf("line should also say when it was filed (%s):\n%s", filed, md)
+	}
+}
+
+// A done event may arrive with a missing or unparseable ts: store.readFile
+// tolerates any line carrying an id (§10). Publishing that as done_ts would
+// strand the todo in no view at all — out of entries because its day matches
+// nothing, out of open_todos because it is closed.
+func TestFoldClosedTodoSurvivesUnusableCloseTime(t *testing.T) {
+	for _, badTS := range []string{"", "not-a-date"} {
+		todo := ev("2026-08-23", event.TypeTodo, "agent:claude", "renew the cert")
+		done := ev("2026-08-23", event.TypeDone, "human:cli", "rotated it")
+		done.Parent = &todo.ID
+		done.TS = badTS
+
+		day := Fold([]event.Event{todo, done}, date("2026-08-23"), time.Now())
+
+		if len(day.Entries) != 1 || day.Entries[0].TLDR != "renew the cert" {
+			t.Errorf("ts=%q: closed todo must still render, on its filing day: %+v", badTS, day.Entries)
+		}
+		if day.Entries[0].DoneTS != "" {
+			t.Errorf("ts=%q: unusable close time must not be published, got %q", badTS, day.Entries[0].DoneTS)
+		}
+		if !day.Entries[0].Done {
+			t.Errorf("ts=%q: the todo is still closed", badTS)
+		}
+		// and the markdown renderer must not claim a filing time it cannot show
+		if md := Markdown(day); strings.Contains(md, "??:??") {
+			t.Errorf("ts=%q: markdown rendered an unusable clock:\n%s", badTS, md)
+		}
+	}
+}

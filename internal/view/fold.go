@@ -4,6 +4,7 @@
 package view
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +16,10 @@ import (
 // after reclassification, Done reflects a closing `done` event, PR is the
 // snapshot join for entries referencing a pull request (nil when the
 // snapshot has nothing for them).
+//
+// TS and DoneTS are both kept: a closed todo has two moments worth showing —
+// when it was taken on and when it was finished — and collapsing them would
+// lose the one thing a completed todo actually tells you.
 type Entry struct {
 	ID           string         `json:"id"`
 	TS           string         `json:"ts"`
@@ -26,6 +31,7 @@ type Entry struct {
 	Refs         []string       `json:"refs"`
 	Ctx          event.Ctx      `json:"ctx"`
 	Done         bool           `json:"done"`
+	DoneTS       string         `json:"done_ts,omitempty"`
 	DoneNote     string         `json:"done_note,omitempty"`
 	Verdict      string         `json:"verdict,omitempty"`
 	Meta         map[string]any `json:"meta,omitempty"`
@@ -80,6 +86,17 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 		if d, ok := doneBy[e.ID]; ok {
 			en.Done = true
 			en.DoneNote = d.TLDR
+			// Only a usable closing time is published. store.readFile
+			// tolerates any line carrying an id (§10), so a done event can
+			// arrive with a missing or unparseable ts; leaving it here would
+			// strand the todo in no day at all — out of entries because its
+			// day matches nothing, and out of open_todos because it is
+			// closed. Absent done_ts means every consumer falls back to the
+			// filing time, which is what they did before closing times
+			// existed.
+			if tsDay(d.TS) != "" {
+				en.DoneTS = d.TS
+			}
 		}
 		en.Verdict = verdicts[e.ID]
 		return en
@@ -110,8 +127,16 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 		}
 
 		isOpenTodo := en.Type == event.TypeTodo && !en.Done
+		// A closed todo is filed under the day it was *closed*, not the day
+		// it was filed: until then it was an obligation carried forward, and
+		// it only became a record of something that happened when it was
+		// finished. Anything else already happened on the day it was logged.
+		entryDay := eventDay(e)
+		if en.Type == event.TypeTodo && en.DoneTS != "" {
+			entryDay = tsDay(en.DoneTS)
+		}
 		// The work log records what happened; an open todo hasn't.
-		if !isOpenTodo && eventDay(e) == dayStr {
+		if !isOpenTodo && entryDay == dayStr {
 			day.Entries = append(day.Entries, en)
 		}
 		if isOpenTodo {
@@ -121,7 +146,23 @@ func Fold(all []event.Event, date time.Time, now time.Time) Day {
 			}
 		}
 	}
+	// Closed todos enter the log at their closing time, so ULID order (which
+	// is filing order) no longer matches the day's actual sequence.
+	sort.SliceStable(day.Entries, func(i, j int) bool {
+		return logTime(day.Entries[i]).Before(logTime(day.Entries[j]))
+	})
 	return day
+}
+
+// logTime is when an entry took its place in the day's log: the closing time
+// for a closed todo, the event's own time for everything else.
+func logTime(e Entry) time.Time {
+	ts := e.TS
+	if e.Type == event.TypeTodo && e.DoneTS != "" {
+		ts = e.DoneTS
+	}
+	t, _ := time.Parse(time.RFC3339, ts)
+	return t
 }
 
 // Resolutions folds the correction events into lookup maps: the effective
@@ -156,8 +197,10 @@ func Resolutions(all []event.Event) (reclassified map[string]string, doneBy map[
 
 // eventDay extracts the calendar date of an event in its own recorded
 // timezone offset, matching the file it was written to.
-func eventDay(e event.Event) string {
-	t, err := time.Parse(time.RFC3339, e.TS)
+func eventDay(e event.Event) string { return tsDay(e.TS) }
+
+func tsDay(ts string) string {
+	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		return ""
 	}

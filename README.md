@@ -172,6 +172,11 @@ consumers.
 `needs_triage` filters `open_todos` rather than partitioning it — render
 `open_todos` and consult `needs_triage` by id, or the same todo draws twice.
 
+A closed todo appears in `entries` on the day it was *closed*, carrying both
+timestamps: `ts` is when it was filed, `done_ts` when it was finished. Lead
+the row with `done_ts` — that is when it happened — and show `ts` alongside,
+so a todo you carried for three days says so.
+
 - **Linux / Omarchy** — [`omarchy-plugin/`](omarchy-plugin/) is a bar widget
   for Omarchy 4's Quickshell desktop. Install with `./install.sh --omarchy`;
   details in [omarchy-plugin/README.md](omarchy-plugin/README.md).
@@ -218,7 +223,8 @@ already applied, so consumers stay dumb:
   "date": "2026-08-23",
   "generated_at": "2026-08-23T18:02:11+02:00",
   "entries":    [ { "id", "ts", "source", "type", "original_type?", "tldr",
-                    "refs", "ctx", "done", "done_note?", "meta?", "pr?" } ],
+                    "refs", "ctx", "done", "done_ts?", "done_note?",
+                    "meta?", "pr?" } ],
   "open_todos":  [ "…every open todo, agent- and human-filed, any day…" ],
   "needs_triage":[ "…filters open_todos: agent proposals awaiting a verdict…" ],
   "prs":        [ { "ref", "repo", "number", "title", "url", "state",
