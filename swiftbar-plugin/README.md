@@ -22,8 +22,8 @@ ships — no python, no jq.
   agent proposal still awaiting your verdict is accented and marked `●`.
 - **The day's log** — its entries with time, source, and live PR status on
   entries that reference a PR. Closed todos are checked and dimmed. The
-  heading names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`)
-  and opens a submenu that walks to the days on either side.
+  heading names the day (`◀ TODAY · MON, AUG 24`) and is itself the control
+  for it: click to walk back a day, hold `⌥` to come back.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
 
 ## Actions
@@ -32,7 +32,7 @@ ships — no python, no jq.
 |---|---|
 | Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
 | Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
-| Day heading → submenu | `◀`/`▶` step a day back or forward, `↩ Back to today` returns in one click |
+| Day heading | Click walks back a day; hold `⌥` and the same row becomes the way back toward today |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders |
 
@@ -40,17 +40,22 @@ Hover any entry for the full detail (source, refs, close note).
 
 ## Walking back through days
 
-The day heading carries `◀`/`▶` in its own submenu, so navigation costs no
-rows of its own. They re-run the same read against another day
-(`daylog today 2026-08-19 --json`) and re-render. Only the log section moves:
+The day heading is the control for the day, so navigation costs no rows of its
+own: clicking `◀ TODAY · MON, AUG 24` walks back a day, and holding `⌥` swaps
+that same row in place for the way back — one step from yesterday, the whole
+way from further out, so `⌥` always means "toward today" and you can never be
+stranded. Each click re-runs the same read against another day
+(`daylog today 2026-08-19 --json`) and re-renders. Only the log section moves:
 open todos are obligations that don't expire at midnight and PRs are live
 state, so the menu bar icon keeps counting what needs you *now* whichever day
-you are reading. Forward stops at today. An empty day says which day it was
-empty about, so an untouched Tuesday can't read as a quiet morning.
+you are reading. An empty day says which day it was empty about, so an
+untouched Tuesday can't read as a quiet morning.
 
-They are menu items and not arrow keys because an open macOS menu owns the arrow
-keys for its own row and submenu navigation — a plugin never sees them. (The
-Omarchy panel is a real focused window, so there `←`/`→` do this directly.)
+It is a click and not `←`/`→` because an open macOS menu owns the arrow keys
+for its own row and submenu navigation — a plugin never sees them — and
+SwiftBar's one key facility, `shortcut=`, registers a *global system-wide*
+hotkey, which is no place for an arrow key. (The Omarchy panel is a real
+focused window, so there `←`/`→` do this directly.)
 
 The day you picked is remembered in `$TMPDIR/daylog-view-day` — SwiftBar
 re-executes the plugin from scratch on every refresh, so it has to live
@@ -58,13 +63,13 @@ somewhere — and expires after 10 minutes. That is deliberate: this is a
 *today* widget, and a menu bar that still reads Tuesday three hours after you
 went looking is worse than one that forgets.
 
-A `◀`/`▶` item re-runs *this plugin* with two plain arguments
+The day row re-runs *this plugin* with two plain arguments
 (`daylog.1m.js view-day 2026-08-19`), which records the choice and lets
 SwiftBar's `refresh=true` redraw. Keep it that way: a menu line carries
 arguments, never a shell command, so nothing in it can be mis-parsed on the
 way to a shell.
 
-The nav items carry no `sfimage`. SF Symbols do render on the submenu items,
+The day row carries no `sfimage`. SF Symbols do render on the todo submenus,
 but on a row that already leads with an arrow glyph SwiftBar drew no symbol
 at all, so the arrow is the text's job.
 

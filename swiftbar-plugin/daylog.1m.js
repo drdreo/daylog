@@ -337,36 +337,45 @@ function dayNavLines(day, ctx, lines) {
   var prev = shiftDay(iso, -1)
   var next = shiftDay(iso, 1)
 
-  // The heading owns the day: it is both the section label and the menu that
-  // walks off it, so navigation costs no rows of its own. A submenu parent has
-  // no action, so it names its color rather than sitting there in the
-  // disabled-grey a plain section header wants.
+  // One row for the day, and that row IS the control: the heading already
+  // names the day, so it may as well be the thing that changes it. ◀ walks
+  // back on a click; holding ⌥ swaps the row in place for the way forward. No
+  // submenu, no rows spent on navigation, and the menu is no longer than it
+  // was before any of this existed.
   //
   // Without a path back to this file there is nothing to walk with, and an
   // unreadable date leaves nothing to walk from; either way the heading stays
-  // a plain label rather than opening an empty menu.
+  // the plain dim label a section header wants to be.
   var walkable = ctx.self !== '' && prev !== ''
-  lines.push(line(dayHeading(iso, todayISO), {
-    color: walkable ? TEXT : DIM, size: 11,
-    tooltip: walkable ? 'Walk back through earlier days' : undefined,
-  }))
-  if (!walkable) return
+  var heading = dayHeading(iso, todayISO)
+  if (!walkable) {
+    lines.push(line(heading, { color: DIM, size: 11 }))
+    return
+  }
 
   // No sfimage on these rows: SF Symbols render on the todo submenus, but on a
   // row that already leads with a glyph SwiftBar drew nothing at all (checked
   // against a live menu bar), so the arrow is the text's job.
-  lines.push(line('-- ◀  ' + dayName(prev, todayISO), viewDayAction(ctx, prev, {
-    tooltip: 'Show ' + calendarName(prev),
+  lines.push(line('◀  ' + heading, viewDayAction(ctx, prev, {
+    color: TEXT, size: 11,
+    tooltip: 'Show ' + calendarName(prev) + (delta === 0 ? '' : ' — hold ⌥ to come back'),
   })))
-  if (next !== '' && delta < 0) {
-    lines.push(line('-- ▶  ' + dayName(next, todayISO), viewDayAction(ctx, delta === -1 ? '' : next, {
-      tooltip: 'Show ' + calendarName(next),
+
+  // The ⌥ twin of the row above. One step forward is enough to reach today
+  // from yesterday; from further out, the useful move is the whole way back,
+  // so ⌥ always means "toward today" and you can never be stranded.
+  if (delta === -1) {
+    lines.push(line('▶  ' + heading, viewDayAction(ctx, '', {
+      color: TEXT, size: 11, alternate: 'true', tooltip: 'Show today',
     })))
-  }
-  // Redundant when ▶ already says "Today"; the long way back needs one click.
-  if (delta !== 0 && delta !== -1) {
-    lines.push(line('-- ↩  Back to today', viewDayAction(ctx, '', {
-      tooltip: 'Show today again',
+  } else if (delta < -1) {
+    lines.push(line('↩  ' + heading, viewDayAction(ctx, '', {
+      color: TEXT, size: 11, alternate: 'true', tooltip: 'Back to today',
+    })))
+  } else if (next !== '' && delta > 0) {
+    // Only reachable if the store hands back a future date; walk it home too.
+    lines.push(line('▶  ' + heading, viewDayAction(ctx, '', {
+      color: TEXT, size: 11, alternate: 'true', tooltip: 'Back to today',
     })))
   }
 }

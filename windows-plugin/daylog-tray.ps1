@@ -436,49 +436,37 @@ function Add-TodoRow($Menu, $Entry, [bool]$Untriaged) {
     [void]$Menu.Items.Add($it)
 }
 
-# The day section's heading, carrying the ways to walk off this day in its own
-# submenu. Always rendered, even for an empty day — a day you cannot navigate
-# away from is a dead end. It is a menu and not ←/→ keybindings on purpose: an
-# open Windows menu owns the arrow keys for its own row and submenu navigation.
-# The Omarchy panel is a real focused window, so that is where ←→ do this for
-# real.
+# The day's heading, which is also the control for the day: ◀ walks back a day
+# on a click, so navigation costs no rows of its own. Always rendered, even for
+# an empty day — a day you cannot navigate away from is a dead end.
+#
+# It is a row and not a ←/→ keybinding on purpose: an open Windows menu owns
+# the arrow keys for its own row and submenu navigation. The Omarchy panel is a
+# real focused window, so that is where ←→ do this for real. The SwiftBar
+# sibling hides its way back under ⌥ on this same row; WinForms menus have no
+# alternate item, so here it is a second row, and only while you are away from
+# today.
 function Add-DayNav($Menu, [string]$Iso) {
     $delta = Get-DayDelta (Get-Today) $Iso
     $prev = Get-ShiftedDay $Iso (-1)
 
-    # The heading owns the day: it is both the section label and the menu that
-    # walks off it, so navigation costs no rows of its own. An unreadable date
-    # leaves nothing to walk from, and the heading stays a plain disabled label
-    # rather than opening an empty submenu.
-    $head = Add-Row $Menu (Get-DayHeading $Iso) -Header
+    # An unreadable date leaves nothing to walk from, so the heading stays the
+    # plain disabled label a section header wants to be.
+    $head = Add-Row $Menu ('◀  ' + (Get-DayHeading $Iso)) -Header
     if (-not $prev) {
+        $head.Text = Get-MenuText (Get-DayHeading $Iso)
         $head.Enabled = $false
         return
     }
-    $head.ToolTipText = 'Walk back through earlier days'
+    $head.ToolTipText = 'Show ' + (Get-CalendarName $prev)
+    $head.Tag = $prev
+    $head.Add_Click($script:ViewDayHandler)
 
-    $it = New-Object System.Windows.Forms.ToolStripMenuItem((Get-MenuText ('◀  ' + (Get-DayName $prev))))
-    $it.ToolTipText = 'Show ' + (Get-CalendarName $prev)
-    $it.Tag = $prev
-    $it.Add_Click($script:ViewDayHandler)
-    [void]$head.DropDownItems.Add($it)
-
-    # Forward stops at today: a day that hasn't happened has nothing to log.
-    $next = Get-ShiftedDay $Iso 1
-    if ($next -and $delta -lt 0) {
-        $it = New-Object System.Windows.Forms.ToolStripMenuItem((Get-MenuText ((Get-DayName $next) + '  ▶')))
-        $it.ToolTipText = 'Show ' + (Get-CalendarName $next)
-        $it.Tag = if ($delta -eq -1) { '' } else { $next }
-        $it.Add_Click($script:ViewDayHandler)
-        [void]$head.DropDownItems.Add($it)
-    }
-    # Redundant while ▶ already says Today; the long way back needs one click.
-    if ($delta -ne 0 -and $delta -ne -1) {
-        $it = New-Object System.Windows.Forms.ToolStripMenuItem('↩  Back to today')
-        $it.ToolTipText = 'Show today again'
+    if ($delta -ne 0) {
+        $label = if ($delta -eq -1) { '▶  Today' } else { '↩  Back to today' }
+        $it = Add-Row $Menu $label -Tooltip 'Show today again'
         $it.Tag = ''
         $it.Add_Click($script:ViewDayHandler)
-        [void]$head.DropDownItems.Add($it)
     }
 }
 
