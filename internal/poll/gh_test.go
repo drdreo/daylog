@@ -1,7 +1,6 @@
 package poll
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -27,90 +26,6 @@ func pr(ref, state, checks, review string) snapshot.PR {
 		State: state, Checks: checks, Review: review}
 }
 
-func kinds(ts []Transition) []string {
-	var out []string
-	for _, t := range ts {
-		out = append(out, t.Kind)
-	}
-	return out
-}
-
-func TestDiffMergedAndClosed(t *testing.T) {
-	old := snapWith(pr("gh:pr:a/b#1", "open", "passing", "approved"),
-		pr("gh:pr:a/b#2", "open", "none", "none"))
-	cur := snapWith(pr("gh:pr:a/b#1", "merged", "passing", "approved"),
-		pr("gh:pr:a/b#2", "closed", "none", "none"))
-	ts := diffGHPRs(old, cur)
-	if got := kinds(ts); len(got) != 2 || got[0] != "pr_merged" || got[1] != "pr_closed" {
-		t.Fatalf("kinds = %v, want [pr_merged pr_closed]", got)
-	}
-	if !strings.HasPrefix(ts[0].TLDR, "PR merged: ") {
-		t.Errorf("tldr = %q", ts[0].TLDR)
-	}
-	if ts[0].Meta["kind"] != "pr_merged" {
-		t.Errorf("meta.kind = %v", ts[0].Meta["kind"])
-	}
-}
-
-func TestDiffCheckFlipsAreSnapshotOnly(t *testing.T) {
-	cases := []struct {
-		oldChecks, newChecks string
-	}{
-		{"passing", "failing"},
-		{"pending", "failing"},
-		{"none", "failing"},
-		{"failing", "passing"},
-		{"failing", "pending"},
-		{"pending", "passing"},
-		{"passing", "pending"},
-		{"passing", "passing"},
-	}
-	for _, c := range cases {
-		old := snapWith(pr("gh:pr:a/b#1", "open", c.oldChecks, "none"))
-		cur := snapWith(pr("gh:pr:a/b#1", "open", c.newChecks, "none"))
-		got := kinds(diffGHPRs(old, cur))
-		if len(got) != 0 {
-			t.Errorf("%s→%s: kinds = %v, want no transition", c.oldChecks, c.newChecks, got)
-		}
-	}
-}
-
-func TestDiffReviewDecision(t *testing.T) {
-	cases := []struct {
-		oldRev, newRev string
-		want           []string
-	}{
-		{"review_required", "approved", []string{"review_approved"}},
-		{"none", "changes_requested", []string{"review_changes_requested"}},
-		{"approved", "review_required", nil}, // new commits reset it: noise
-		{"approved", "approved", nil},
-	}
-	for _, c := range cases {
-		old := snapWith(pr("gh:pr:a/b#1", "open", "none", c.oldRev))
-		cur := snapWith(pr("gh:pr:a/b#1", "open", "none", c.newRev))
-		got := kinds(diffGHPRs(old, cur))
-		if fmt.Sprint(got) != fmt.Sprint(c.want) {
-			t.Errorf("%s→%s: kinds = %v, want %v", c.oldRev, c.newRev, got, c.want)
-		}
-	}
-}
-
-func TestDiffNewPRIsNotATransition(t *testing.T) {
-	old := snapWith()
-	cur := snapWith(pr("gh:pr:a/b#1", "open", "failing", "changes_requested"))
-	if ts := diffGHPRs(old, cur); len(ts) != 0 {
-		t.Fatalf("a newly tracked PR must not fabricate transitions, got %v", kinds(ts))
-	}
-}
-
-func TestDiffMergeSuppressesCheckAndReviewNoise(t *testing.T) {
-	old := snapWith(pr("gh:pr:a/b#1", "open", "passing", "none"))
-	cur := snapWith(pr("gh:pr:a/b#1", "merged", "failing", "approved"))
-	if got := kinds(diffGHPRs(old, cur)); len(got) != 1 || got[0] != "pr_merged" {
-		t.Fatalf("kinds = %v, want [pr_merged]", got)
-	}
-}
-
 func TestChecksFrom(t *testing.T) {
 	cases := []struct {
 		nodes []ghCheckNode
@@ -130,19 +45,6 @@ func TestChecksFrom(t *testing.T) {
 		if got := checksFrom(c.nodes); got != c.want {
 			t.Errorf("case %d: checksFrom = %q, want %q", i, got, c.want)
 		}
-	}
-}
-
-func TestClipBoundsTLDR(t *testing.T) {
-	long := strings.Repeat("x", 400)
-	old := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1, Title: long, State: "open"})
-	cur := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1, Title: long, State: "merged"})
-	ts := diffGHPRs(old, cur)
-	if len(ts) != 1 {
-		t.Fatal("expected one transition")
-	}
-	if n := len([]rune(ts[0].TLDR)); n > 280 {
-		t.Fatalf("tldr is %d chars, exceeds write limit", n)
 	}
 }
 
@@ -188,7 +90,7 @@ func viewJSON(state, checks string, review string) string {
 		state, review, rollup)
 }
 
-func TestRunGHFirstRunIsBaselineOnly(t *testing.T) {
+func TestRunGHFirstRunWritesSnapshotOnly(t *testing.T) {
 	tempDataDir(t)
 	stubGH(t, map[string]string{
 		"search prs":           `[{"number":1,"repository":{"nameWithOwner":"a/b"}}]`,
@@ -210,45 +112,53 @@ func TestRunGHFirstRunIsBaselineOnly(t *testing.T) {
 		t.Errorf("PR = %+v", got)
 	}
 	if evs, _ := store.ReadAll(); len(evs) != 0 {
-		t.Fatalf("first run fabricated %d transitions", len(evs))
+		t.Fatalf("GitHub poll wrote %d narrative events", len(evs))
 	}
 }
 
-func TestRunGHEmitsMergeTransition(t *testing.T) {
+func TestRunGHWorkflowChangesStaySnapshotOnly(t *testing.T) {
 	tempDataDir(t)
 	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
 		Title: "Fix races", State: "open", Checks: "passing", Review: "approved"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
 	}
-	// The PR no longer appears in the open search; the poller must re-fetch
-	// it because the previous snapshot thought it was open.
 	stubGH(t, map[string]string{
-		"search prs":           `[]`,
-		"pr view 1 --repo a/b": viewJSON("MERGED", "passing", "APPROVED"),
+		"search prs":           `[{"number":1,"repository":{"nameWithOwner":"a/b"}}]`,
+		"pr view 1 --repo a/b": viewJSON("OPEN", "failing", "CHANGES_REQUESTED"),
 	}, nil)
 
 	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
-	evs, err := store.ReadAll()
-	if err != nil || len(evs) != 1 {
-		t.Fatalf("events = %d (%v), want 1", len(evs), err)
-	}
-	e := evs[0]
-	if e.Type != "transition" || e.Source != "poller:gh" {
-		t.Errorf("event = %+v", e)
-	}
-	if len(e.Refs) != 1 || e.Refs[0] != "gh:pr:a/b#1" {
-		t.Errorf("refs = %v", e.Refs)
-	}
-	if e.Meta["kind"] != "pr_merged" {
-		t.Errorf("meta = %v", e.Meta)
-	}
-	// The merged PR is recorded once, then drops out of tracking next run.
 	snap, _ := snapshot.LoadGHPRs()
-	if snap.PRs["gh:pr:a/b#1"].State != "merged" {
-		t.Errorf("snapshot state = %q", snap.PRs["gh:pr:a/b#1"].State)
+	got := snap.PRs["gh:pr:a/b#1"]
+	if got.Checks != "failing" || got.Review != "changes_requested" {
+		t.Fatalf("snapshot did not refresh workflow state: %+v", got)
+	}
+	if evs, _ := store.ReadAll(); len(evs) != 0 {
+		t.Fatalf("workflow refresh wrote %d narrative events", len(evs))
+	}
+}
+
+func TestRunGHDropsMergedPRWithoutNarratingIt(t *testing.T) {
+	tempDataDir(t)
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
+		Title: "Fix races", State: "open", Checks: "passing", Review: "approved"})
+	if err := snapshot.SaveGHPRs(prev); err != nil {
+		t.Fatal(err)
+	}
+	stubGH(t, map[string]string{"search prs": `[]`}, nil)
+
+	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if evs, err := store.ReadAll(); err != nil || len(evs) != 0 {
+		t.Fatalf("events = %d (%v), want none", len(evs), err)
+	}
+	snap, _ := snapshot.LoadGHPRs()
+	if len(snap.PRs) != 0 {
+		t.Errorf("snapshot = %+v, want merged PR removed", snap.PRs)
 	}
 }
 
@@ -279,8 +189,9 @@ func TestRunGHPartialFetchFailureSkipsEverything(t *testing.T) {
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
 	}
-	stubGH(t, map[string]string{"search prs": `[]`},
-		map[string]error{"pr view": fmt.Errorf("api hiccup")})
+	stubGH(t, map[string]string{
+		"search prs": `[{"number":1,"repository":{"nameWithOwner":"a/b"}}]`,
+	}, map[string]error{"pr view 1 --repo a/b": fmt.Errorf("api hiccup")})
 
 	if err := RunGH(io.Discard, io.Discard, false, time.Now(), ""); err != nil {
 		t.Fatal(err)
@@ -290,7 +201,7 @@ func TestRunGHPartialFetchFailureSkipsEverything(t *testing.T) {
 		t.Fatal("partial fetch must not replace the snapshot")
 	}
 	if evs, _ := store.ReadAll(); len(evs) != 0 {
-		t.Fatal("partial fetch must skip the diff entirely")
+		t.Fatal("partial fetch must not write narrative events")
 	}
 }
 
@@ -302,15 +213,15 @@ func TestRunGHDryRunWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	stubGH(t, map[string]string{
-		"search prs":           `[]`,
-		"pr view 1 --repo a/b": viewJSON("MERGED", "passing", ""),
+		"search prs":           `[{"number":1,"repository":{"nameWithOwner":"a/b"}}]`,
+		"pr view 1 --repo a/b": viewJSON("OPEN", "failing", "CHANGES_REQUESTED"),
 	}, nil)
 
 	var out strings.Builder
 	if err := RunGH(&out, io.Discard, true, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "would log: PR merged") {
+	if !strings.Contains(out.String(), "would snapshot 1 open PRs") {
 		t.Errorf("dry-run output = %q", out.String())
 	}
 	if evs, _ := store.ReadAll(); len(evs) != 0 {
@@ -332,7 +243,7 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"u","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x"}`,
 	}, nil)
 	now, _ := time.Parse(time.RFC3339, "2026-08-23T12:00:00Z")
-	cur, _, err := fetchGHPRs(nil, now, ownerFilter{})
+	cur, _, err := fetchGHPRs(now, ownerFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,19 +255,6 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 		State: "open", Draft: true, Checks: "pending", Review: "none", UpdatedAt: "x"}
 	if got != want {
 		t.Errorf("PR = %+v, want %+v", got, want)
-	}
-}
-
-func TestTransitionEventValidates(t *testing.T) {
-	ts := diffGHPRs(
-		snapWith(pr("gh:pr:a/b#1", "open", "passing", "none")),
-		snapWith(pr("gh:pr:a/b#1", "merged", "passing", "none")))
-	e := transitionEvent(ts[0], time.Now())
-	if e.ID == "" || e.TS == "" {
-		t.Fatalf("event = %+v", e)
-	}
-	if _, err := json.Marshal(e); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -432,10 +330,7 @@ func TestFetchNarrowsSearchAndDropsOutOfScopePRs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A previously tracked PR from another owner must not be re-fetched.
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:personal/toy#9", Repo: "personal/toy",
-		Number: 9, State: "open"})
-	cur, _, err := fetchGHPRs(prev, time.Now(), filter)
+	cur, _, err := fetchGHPRs(time.Now(), filter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +354,7 @@ func TestFetchResolvesSelfToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cur, _, err := fetchGHPRs(nil, time.Now(), filter)
+	cur, _, err := fetchGHPRs(time.Now(), filter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +374,7 @@ func TestRunGHRejectsMalformedFilterBeforeTouchingDisk(t *testing.T) {
 	}
 }
 
-func TestRunGHOutOfScopePRIsNotNarratedAsClosed(t *testing.T) {
+func TestRunGHOutOfScopePRDropsWithoutNarrativeEvent(t *testing.T) {
 	tempDataDir(t)
 	prev := snapWith(snapshot.PR{Ref: "gh:pr:otherco/app#1", Repo: "otherco/app",
 		Number: 1, Title: "Fix races", State: "open", Checks: "passing"})
@@ -492,7 +387,7 @@ func TestRunGHOutOfScopePRIsNotNarratedAsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if evs, _ := store.ReadAll(); len(evs) != 0 {
-		t.Fatalf("narrowing the filter fabricated %d transitions", len(evs))
+		t.Fatalf("narrowing the filter wrote %d narrative events", len(evs))
 	}
 	snap, _ := snapshot.LoadGHPRs()
 	if len(snap.PRs) != 0 {
