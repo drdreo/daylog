@@ -35,8 +35,119 @@ Item {
   readonly property string date: day && day.date ? String(day.date) : ""
   readonly property string prsFetchedAt: day && day.prs_fetched_at ? String(day.prs_fetched_at) : ""
 
+  // ------------------------------------------------------------ which day
+  //
+  // The panel is a window onto one day, not a hardcoded today. viewDate is
+  // the *request* ("" = today, and it keeps meaning today across midnight);
+  // shownDate is the day actually loaded, which is what every label reads,
+  // so a heading can never describe a day other than the entries beneath it.
+  property string viewDate: ""
+  // Restamped on every refresh rather than bound to a `new Date()` QML would
+  // never re-evaluate, so a panel left open rolls over at midnight.
+  property string todayDate: Qt.formatDate(new Date(), "yyyy-MM-dd")
+  property bool pendingRefresh: false
+
+  readonly property string shownDate: date !== "" ? date : (viewDate !== "" ? viewDate : todayDate)
+  // Negative for the past; 0 is today, which is what hides the ▶ row.
+  readonly property int shownDelta: dayDelta(todayDate, shownDate)
+
+  // Walk to another day. Forward stops at today: a day that hasn't happened
+  // has nothing to log. The step is taken from the requested day, not the
+  // loaded one, so holding ← keeps moving while a fold is still in flight.
+  function stepDay(delta) {
+    var next = shiftDay(viewDate !== "" ? viewDate : todayDate, delta)
+    if (next === "" || dayDelta(todayDate, next) > 0) return
+    viewDate = next === todayDate ? "" : next
+    refresh()
+  }
+
+  function resetDay() {
+    if (viewDate === "") return
+    viewDate = ""
+    refresh()
+  }
+
+  // ------------------------------------------------------------ days as days
+  //
+  // A day is a calendar day, never an instant: it is shifted and compared by
+  // its date components at local midnight, so day arithmetic survives the
+  // clocks changing. `iso` is always the YYYY-MM-DD the CLI speaks.
+
+  function dayOf(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""))
+    return m === null ? null : new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  }
+
+  function shiftDay(iso, delta) {
+    var d = dayOf(iso)
+    if (d === null) return ""
+    return Qt.formatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta), "yyyy-MM-dd")
+  }
+
+  // Whole calendar days from fromISO to toISO — negative for the past. An
+  // unparseable date yields 0, which degrades to "treat it as today" in every
+  // caller rather than to a broken panel.
+  function dayDelta(fromISO, toISO) {
+    var a = dayOf(fromISO), b = dayOf(toISO)
+    if (a === null || b === null) return 0
+    return Math.round((b.getTime() - a.getTime()) / 86400000)
+  }
+
+  function calendarName(iso) {
+    var d = dayOf(iso)
+    return d === null ? "" : Qt.formatDate(d, "ddd, MMM d")
+  }
+
+  // The name a human would use: Today, Yesterday, or "Wed, Aug 19".
+  function dayName(iso) {
+    var delta = dayDelta(todayDate, iso)
+    if (delta === 0) return "Today"
+    if (delta === -1) return "Yesterday"
+    if (delta === 1) return "Tomorrow"
+    var name = calendarName(iso)
+    return name === "" ? String(iso || "") : name
+  }
+
+  // The distance spelled out, for days whose name doesn't already say it.
+  function dayDistance(iso) {
+    var delta = dayDelta(todayDate, iso)
+    if (delta >= -1 && delta <= 1) return ""
+    return delta < 0 ? -delta + " days ago" : "in " + delta + " days"
+  }
+
+  // The day section's heading: the day's name, its date when the name hides
+  // it, and how far back it is. "TODAY · MON, AUG 24", "WED, AUG 19 · 5 DAYS AGO".
+  function dayHeading(iso) {
+    var parts = [dayName(iso)]
+    var calendar = calendarName(iso)
+    if (calendar !== "" && calendar !== parts[0]) parts.push(calendar)
+    var distance = dayDistance(iso)
+    if (distance !== "") parts.push(distance)
+    return parts.join(" · ").toUpperCase()
+  }
+
+  // The empty state names the day it is empty *about*, so an untouched
+  // Tuesday can never be misread as a quiet morning.
+  function emptyDayNote(iso) {
+    var delta = dayDelta(todayDate, iso)
+    if (delta === 0) return "Nothing logged yet today."
+    if (delta > 0) return "Nothing logged for " + dayName(iso).toLowerCase() + " yet."
+    if (delta === -1) return "Nothing was logged yesterday."
+    return "Nothing was logged on " + calendarName(iso) + "."
+  }
+
+  // A day request in flight is not dropped, just queued: holding ← must keep
+  // walking rather than stall on whichever fold happened to be running.
   function refresh() {
-    if (!todayProcess.running) todayProcess.running = true
+    todayDate = Qt.formatDate(new Date(), "yyyy-MM-dd")
+    if (todayProcess.running) {
+      pendingRefresh = true
+      return
+    }
+    todayProcess.command = viewDate === ""
+      ? [daylogPath, "today", "--json"]
+      : [daylogPath, "today", viewDate, "--json"]
+    todayProcess.running = true
   }
 
   // One PR poll cycle through the same CLI the systemd timer uses; the
@@ -90,7 +201,12 @@ Item {
   Process {
     id: todayProcess
     running: false
-    command: [root.daylogPath, "today", "--json"]
+    // No declarative command: refresh() builds it, because it carries the day
+    // being requested and must not change under a running process.
+    onExited: if (root.pendingRefresh) {
+      root.pendingRefresh = false
+      Qt.callLater(root.refresh)
+    }
 
     stdout: StdioCollector {
       waitForEnd: true

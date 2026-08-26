@@ -17,8 +17,10 @@ is replaceable in an afternoon.
   middle-click refreshes.
 - **Open todos** — every open todo in one list, yours and the agents'. An
   agent proposal still awaiting your verdict is accented and marked `●`.
-- **Today** — the day's entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are struck through.
+- **The day's log** — its entries with time, source, and live PR status on
+  entries that reference a PR. Closed todos are struck through. The heading
+  names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`) and
+  `←`/`→` walk to the days on either side.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
 
 ## Keyboard
@@ -29,6 +31,8 @@ The panel is fully keyboard-driven, one flat cursor over every row
 | Key | Action |
 |---|---|
 | `↑`/`↓` or `k`/`j` | Move the cursor |
+| `←`/`→` or `h`/`l` | Walk a day back or forward through the log |
+| `t` | Back to today |
 | `Enter` / `Space` / `o` | Open the selected PR in the browser (PR rows, or entries referencing one) |
 | `d` | Close the selected todo (`daylog done <id>`) |
 | `a` | Accept the selected agent proposal (`daylog accept <id>`) — adopt it as yours |
@@ -39,7 +43,16 @@ The panel is fully keyboard-driven, one flat cursor over every row
 | `Esc` | Close |
 
 Rows are also clickable: clicking a PR (or an entry that references one)
-opens it in the browser.
+opens it in the browser, and the `◀`/`▶` labels under the day heading do
+what `←`/`→` do.
+
+Walking back re-runs the same read against another day
+(`daylog today 2026-08-19 --json`) and moves the log section alone: open
+todos are obligations that don't expire at midnight and PRs are live state,
+so the bar icon keeps flagging what needs you *now* whichever day you are
+reading. Forward stops at today, an empty day says which day it was empty
+about, and the panel opens on today again — walking back is an errand, not a
+setting.
 
 ## Install
 

@@ -20,8 +20,10 @@ ships — no python, no jq.
   not load the day.
 - **Open todos** — every open todo in one list, yours and the agents'. An
   agent proposal still awaiting your verdict is accented and marked `●`.
-- **Today** — the day's entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are checked and dimmed.
+- **The day's log** — its entries with time, source, and live PR status on
+  entries that reference a PR. Closed todos are checked and dimmed. The
+  heading names the day (`◀ TODAY · MON, AUG 24`) and is itself the control
+  for it: click to walk back a day, hold `⌥` to come back.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
 
 ## Actions
@@ -30,10 +32,64 @@ ships — no python, no jq.
 |---|---|
 | Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
 | Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
+| Day heading | Click walks back a day; hold `⌥` and the same row becomes the way back toward today |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders |
 
 Hover any entry for the full detail (source, refs, close note).
+
+## Walking back through days
+
+The day heading is the control for the day, so navigation costs no rows of its
+own: clicking `◀ TODAY · MON, AUG 24` walks back a day, and holding `⌥` swaps
+that same row in place for the way back — one step from yesterday, the whole
+way from further out, so `⌥` always means "toward today" and you can never be
+stranded. Each click re-runs the same read against another day
+(`daylog today 2026-08-19 --json`) and re-renders. Only the log section moves:
+open todos are obligations that don't expire at midnight and PRs are live
+state, so the menu bar icon keeps counting what needs you *now* whichever day
+you are reading. An empty day says which day it was empty about, so an
+untouched Tuesday can't read as a quiet morning.
+
+It is a click and not `←`/`→` because an open macOS menu owns the arrow keys
+for its own row and submenu navigation — a plugin never sees them — and
+SwiftBar's one key facility, `shortcut=`, registers a *global system-wide*
+hotkey, which is no place for an arrow key. (The Omarchy panel is a real
+focused window, so there `←`/`→` do this directly.)
+
+The day you picked is remembered in `$TMPDIR/daylog-view-day` — SwiftBar
+re-executes the plugin from scratch on every refresh, so it has to live
+somewhere — and expires after 10 minutes. That is deliberate: this is a
+*today* widget, and a menu bar that still reads Tuesday three hours after you
+went looking is worse than one that forgets.
+
+The day row re-runs *this plugin* with two plain arguments
+(`daylog.1m.js view-day 2026-08-19`), which records the choice and lets
+SwiftBar's `refresh=true` redraw. Keep it that way: a menu line carries
+arguments, never a shell command, so nothing in it can be mis-parsed on the
+way to a shell.
+
+The day row carries no `sfimage`. SF Symbols do render on the todo submenus,
+but on a row that already leads with an arrow glyph SwiftBar drew no symbol
+at all, so the arrow is the text's job.
+
+## If the menu bar icon disappears
+
+Suspect the menu bar before the plugin. A status item that SwiftBar
+re-creates on reload can land in space you cannot see — behind the notch, or
+past the right edge of a full menu bar — and the symptom is indistinguishable
+from a broken plugin: no icon, no error. Check the plugin is actually healthy
+first, which takes seconds:
+
+```sh
+pgrep -x SwiftBar                                  # is it even running
+"$(defaults read com.ameba.SwiftBar PluginDirectory)/daylog.1m.js"; echo $?
+```
+
+Valid output and exit 0 means the plugin is fine — SwiftBar re-runs it on
+every interval regardless of whether you can see the result. Then free some
+menu bar room (quit a menu bar app, or ⌘-drag items apart) or restart
+SwiftBar so the item is placed again.
 
 ## Install
 

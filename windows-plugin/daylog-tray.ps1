@@ -31,6 +31,15 @@ if (-not $script:Mutex.WaitOne(0, $false)) { exit 0 }
 $script:Dim    = [System.Drawing.Color]::FromArgb(0x6e, 0x6e, 0x73)
 $script:Urgent = [System.Drawing.Color]::FromArgb(0xc4, 0x32, 0x1e)
 
+# The day the ◀/▶ rows point at ('' = today), and when it was chosen. Walking
+# back through days is an errand, not a setting, so the choice expires and the
+# widget drifts back on its own: a tray icon that still describes Tuesday
+# three hours later is worse than one that forgets. (Expiry rather than a
+# reset on close, because a click both navigates *and* closes the menu.)
+$script:ViewDate = ''
+$script:ViewDateAt = [datetime]::MinValue
+$script:ViewDayTtlSec = 600
+
 # ------------------------------------------------------------------- helpers
 
 function Find-Daylog {
@@ -99,6 +108,89 @@ function Get-FiledStamp($E) {
         if ($filed.Date -ne $closed.Date) { return $filed.ToString('MMM d HH:mm') }
         return $filed.ToString('HH:mm')
     } catch { return '' }
+}
+
+# ------------------------------------------------------------- days as days
+#
+# A day is a calendar day, never an instant: it is shifted and compared by its
+# date components at local midnight, so day arithmetic survives the clocks
+# changing. $Iso is always the YYYY-MM-DD the CLI speaks.
+
+function Get-DayOf([string]$Iso) {
+    if ($Iso -notmatch '^\d{4}-\d{2}-\d{2}$') { return $null }
+    try { return [datetime]::ParseExact($Iso, 'yyyy-MM-dd', $null) } catch { return $null }
+}
+
+function Get-Today { return (Get-Date).ToString('yyyy-MM-dd') }
+
+function Get-ShiftedDay([string]$Iso, [int]$Delta) {
+    $d = Get-DayOf $Iso
+    if ($null -eq $d) { return '' }
+    return $d.AddDays($Delta).ToString('yyyy-MM-dd')
+}
+
+# Whole calendar days from $FromIso to $ToIso — negative for the past. An
+# unparseable date yields 0, which degrades to "treat it as today" in every
+# caller rather than to a broken menu.
+function Get-DayDelta([string]$FromIso, [string]$ToIso) {
+    $a = Get-DayOf $FromIso
+    $b = Get-DayOf $ToIso
+    if ($null -eq $a -or $null -eq $b) { return 0 }
+    return [int][math]::Round(($b - $a).TotalDays)
+}
+
+function Get-CalendarName([string]$Iso) {
+    $d = Get-DayOf $Iso
+    if ($null -eq $d) { return '' }
+    return $d.ToString('ddd, MMM d')
+}
+
+# The name a human would use: Today, Yesterday, or "Wed, Aug 19".
+function Get-DayName([string]$Iso) {
+    $delta = Get-DayDelta (Get-Today) $Iso
+    if ($delta -eq 0) { return 'Today' }
+    if ($delta -eq -1) { return 'Yesterday' }
+    if ($delta -eq 1) { return 'Tomorrow' }
+    $name = Get-CalendarName $Iso
+    if ($name) { return $name }
+    return $Iso
+}
+
+# The distance spelled out, for days whose name doesn't already say it.
+function Get-DayDistance([string]$Iso) {
+    $delta = Get-DayDelta (Get-Today) $Iso
+    if ($delta -ge -1 -and $delta -le 1) { return '' }
+    if ($delta -lt 0) { return "$(-$delta) days ago" }
+    return "in $delta days"
+}
+
+# The day section's heading: the day's name, its date when the name hides it,
+# and how far back it is. "TODAY · MON, AUG 24", "WED, AUG 19 · 5 DAYS AGO".
+function Get-DayHeading([string]$Iso) {
+    $parts = @(Get-DayName $Iso)
+    $calendar = Get-CalendarName $Iso
+    if ($calendar -and $calendar -ne $parts[0]) { $parts += $calendar }
+    $distance = Get-DayDistance $Iso
+    if ($distance) { $parts += $distance }
+    return ($parts -join ' · ').ToUpper()
+}
+
+# The empty state names the day it is empty *about*, so an untouched Tuesday
+# can never be misread as a quiet morning. The ◀/▶ rows sit right above it, so
+# the way out of an empty day is already on screen.
+function Get-EmptyDayNote([string]$Iso) {
+    $delta = Get-DayDelta (Get-Today) $Iso
+    if ($delta -eq 0) { return 'Nothing logged yet today.' }
+    if ($delta -gt 0) { return 'Nothing logged for ' + (Get-DayName $Iso).ToLower() + ' yet.' }
+    if ($delta -eq -1) { return 'Nothing was logged yesterday.' }
+    return 'Nothing was logged on ' + (Get-CalendarName $Iso) + '.'
+}
+
+function Reset-StaleViewDate {
+    if ($script:ViewDate -and
+        ((Get-Date) - $script:ViewDateAt).TotalSeconds -gt $script:ViewDayTtlSec) {
+        $script:ViewDate = ''
+    }
 }
 
 # agent:claude → claude, human:cli → cli, poller:gh → gh
@@ -268,6 +360,13 @@ $script:DeclineHandler = {
     catch { $script:Notify.ShowBalloonTip(4000, 'Daylog', "$($_.Exception.Message)", 'Error') }
     Update-Widget
 }
+# Point the menu at another day (an empty Tag means today) and rebuild.
+$script:ViewDayHandler = {
+    param($s, $e)
+    $script:ViewDate = "$($s.Tag)"
+    $script:ViewDateAt = Get-Date
+    Update-Widget
+}
 $script:RefreshHandler = { param($s, $e) Update-Widget }
 $script:PollHandler = {
     param($s, $e)
@@ -337,6 +436,40 @@ function Add-TodoRow($Menu, $Entry, [bool]$Untriaged) {
     [void]$Menu.Items.Add($it)
 }
 
+# The day's heading, which is also the control for the day: ◀ walks back a day
+# on a click, so navigation costs no rows of its own. Always rendered, even for
+# an empty day — a day you cannot navigate away from is a dead end.
+#
+# It is a row and not a ←/→ keybinding on purpose: an open Windows menu owns
+# the arrow keys for its own row and submenu navigation. The Omarchy panel is a
+# real focused window, so that is where ←→ do this for real. The SwiftBar
+# sibling hides its way back under ⌥ on this same row; WinForms menus have no
+# alternate item, so here it is a second row, and only while you are away from
+# today.
+function Add-DayNav($Menu, [string]$Iso) {
+    $delta = Get-DayDelta (Get-Today) $Iso
+    $prev = Get-ShiftedDay $Iso (-1)
+
+    # An unreadable date leaves nothing to walk from, so the heading stays the
+    # plain disabled label a section header wants to be.
+    $head = Add-Row $Menu ('◀  ' + (Get-DayHeading $Iso)) -Header
+    if (-not $prev) {
+        $head.Text = Get-MenuText (Get-DayHeading $Iso)
+        $head.Enabled = $false
+        return
+    }
+    $head.ToolTipText = 'Show ' + (Get-CalendarName $prev)
+    $head.Tag = $prev
+    $head.Add_Click($script:ViewDayHandler)
+
+    if ($delta -ne 0) {
+        $label = if ($delta -eq -1) { '▶  Today' } else { '↩  Back to today' }
+        $it = Add-Row $Menu $label -Tooltip 'Show today again'
+        $it.Tag = ''
+        $it.Add_Click($script:ViewDayHandler)
+    }
+}
+
 function Build-Menu {
     param($Day, [string]$ErrText)
     $m = $script:Menu
@@ -381,22 +514,27 @@ function Build-Menu {
         foreach ($e in $openTodos) { Add-TodoRow $m $e ($untriagedIds.ContainsKey("$($e.id)")) }
     }
 
-    # ---------- today's entries ----------
-    if ($entries.Count -gt 0) {
+    # ---------- the viewed day's entries ----------
+    # Only entries are scoped to a day: open todos are obligations that don't
+    # expire at midnight and PRs are live state, so walking back through days
+    # moves this section alone — and the tray badge keeps counting what needs
+    # you *now*, whichever day you happen to be reading.
+    if ($Day) {
         Add-Separator $m
-        (Add-Row $m 'TODAY' -Header).Enabled = $false
-        foreach ($e in $entries) {
-            $pr = $e.pr
-            $alarming = $pr -and ("$($pr.checks)" -eq 'failing')
-            $color = $null
-            if ($alarming) { $color = $script:Urgent } elseif ($e.done -eq $true) { $color = $script:Dim }
-            $url = if ($pr -and $pr.url) { "$($pr.url)" } else { '' }
-            $text = (Truncate (Get-EntryText $e $true) 78) + '  — ' + (Get-ShortSource $e.source)
-            [void](Add-Row $m $text -Tooltip (Get-EntryTooltip $e) -Color $color -Url $url)
+        Add-DayNav $m "$($Day.date)"
+        if ($entries.Count -gt 0) {
+            foreach ($e in $entries) {
+                $pr = $e.pr
+                $alarming = $pr -and ("$($pr.checks)" -eq 'failing')
+                $color = $null
+                if ($alarming) { $color = $script:Urgent } elseif ($e.done -eq $true) { $color = $script:Dim }
+                $url = if ($pr -and $pr.url) { "$($pr.url)" } else { '' }
+                $text = (Truncate (Get-EntryText $e $true) 78) + '  — ' + (Get-ShortSource $e.source)
+                [void](Add-Row $m $text -Tooltip (Get-EntryTooltip $e) -Color $color -Url $url)
+            }
+        } else {
+            [void](Add-Row $m (Get-EmptyDayNote "$($Day.date)") -Color $script:Dim)
         }
-    } elseif ($Day) {
-        Add-Separator $m
-        [void](Add-Row $m 'Nothing logged yet today.' -Color $script:Dim)
     }
 
     # ---------- open PRs (snapshot join) ----------
@@ -426,13 +564,15 @@ function Build-Menu {
 
 function Update-Widget {
     $script:Bin = Find-Daylog
+    Reset-StaleViewDate
     $day = $null
     $errText = ''
     if (-not $script:Bin) {
         $errText = 'daylog CLI not found — install it (go install github.com/drdreo/daylog@latest) or set DAYLOG_PATH'
     } else {
-        try { $day = Invoke-Daylog @('today', '--json') | ConvertFrom-Json }
-        catch { $errText = '`daylog today --json` failed: ' + $_.Exception.Message }
+        $argv = if ($script:ViewDate) { @('today', $script:ViewDate, '--json') } else { @('today', '--json') }
+        try { $day = Invoke-Daylog $argv | ConvertFrom-Json }
+        catch { $errText = '`daylog ' + ($argv -join ' ') + '` failed: ' + $_.Exception.Message }
     }
 
     $needsTriage = if ($day -and $day.needs_triage) { @($day.needs_triage) } else { @() }

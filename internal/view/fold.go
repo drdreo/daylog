@@ -13,9 +13,9 @@ import (
 )
 
 // Entry is an event with fold results applied: Type is the effective type
-// after reclassification, Done reflects a closing `done` event, PR is the
-// snapshot join for entries referencing a pull request (nil when the
-// snapshot has nothing for them).
+// after reclassification and Done reflects a closing `done` event. External
+// live state is kept out of entries; it belongs in the separate snapshot
+// collections on Day.
 //
 // TS and DoneTS are both kept: a closed todo has two moments worth showing —
 // when it was taken on and when it was finished — and collapsing them would
@@ -35,7 +35,6 @@ type Entry struct {
 	DoneNote     string         `json:"done_note,omitempty"`
 	Verdict      string         `json:"verdict,omitempty"`
 	Meta         map[string]any `json:"meta,omitempty"`
-	PR           *snapshot.PR   `json:"pr,omitempty"`
 }
 
 // Day is the folded view object emitted by `daylog today --json`.

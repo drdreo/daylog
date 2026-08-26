@@ -82,7 +82,7 @@ The core vocabulary: `work`, `sidequest`, and `note` record activity; `todo` ope
 
 ### 4.3 Typed refs
 
-Refs are URIs with a scheme, not bare strings: `gh:pr:owner/repo#142`, `linear:ABC-123`, `jira:PROJ-45`, `slack:C0123/p16929...`. This is the second extension point. The join between an agent's "I opened PR #142" and the poller's live status happens by ref equality at read time; adding Linear support means the Linear poller writes snapshots keyed by `linear:` refs and nothing else changes. The CLI normalizes shorthand (`#142` in a repo context becomes the full `gh:pr:` ref using captured `ctx.repo`).
+Refs are URIs with a scheme, not bare strings: `gh:pr:owner/repo#142`, `linear:ABC-123`, `jira:PROJ-45`, `slack:C0123/p16929...`. This is the second extension point. They correlate narrative entries with external objects without injecting those objects' changing live status into the log. Poller snapshots remain separate collections in the day view. The CLI normalizes shorthand (`#142` in a repo context becomes the full `gh:pr:` ref using captured `ctx.repo`).
 
 ### 4.4 Snapshots
 
@@ -115,9 +115,9 @@ The instruction is written around a materiality bar rather than a completion tri
 ```markdown
 ## Work logging (daylog)
 
-When a task leaves something behind — code committed, pushed or merged; a
-PR opened or landed; a bug diagnosed or fixed; research or a review that
-reached a conclusion; infrastructure, schema or data changed — run:
+When a task leaves something behind — code, documentation, or product
+behavior materially changed; a bug diagnosed or fixed; research or a review
+reached a conclusion; infrastructure, schema, or data changed — run:
 
     daylog add --type <work|sidequest> "one-line TLDR, ≤280 chars"
 
@@ -130,10 +130,15 @@ the human to review:
 - `work` = the task you were asked to do; `sidequest` = anything you did
   that wasn't the original ask. When unsure, use `sidequest`.
 - Do NOT log: questions answered, code explained or read, trivial edits,
-  progress updates, or work whose only artifact is the conversation. When
-  it is borderline, do not log — a log full of noise stops being read.
-- A substantial attempt that failed is worth logging ("attempted X,
-  blocked by Y"); a trivial one is not.
+  progress updates, routine failures or retries, or work whose only artifact
+  is the conversation. When it is borderline, do not log — a log full of
+  noise stops being read.
+- Do NOT log PR lifecycle, review state, links, or CI/check results. The
+  GitHub poller already owns those. A PR or issue may be a `--ref`, but the
+  entry must describe the underlying work or conclusion, not its PR status.
+- A failure or blocker is not itself an outcome. Log only a durable diagnosis
+  or decision produced by investigating it, and name that result rather than
+  the failed PR, check, command, or attempt.
 - Todos go to the human's review queue. Do not act on them, track them,
   or file them for yourself — filing one ends your involvement with it.
   Triage (`accept`/`decline`) is the human's alone.
@@ -161,7 +166,7 @@ Both are append-only, so the last verdict wins and a decline is reversible by a 
 
 **The human** logs via the same CLI (`daylog add "lunch idea: cache the embeddings"`), and later via Slack (§7.2). Reclassification and todo-closure are human-only operations in practice, though nothing enforces that.
 
-**Pollers** follow one shared pattern, established by the GitHub poller and reused by every future integration: a systemd user timer fires `daylog poll <name>`; the poller fetches current state from the external API; writes the snapshot atomically; diffs against the previous snapshot; and emits `transition` events *only for meaningful changes* (PR merged, checks flipped red/green, review decision changed, issue moved column, issue assigned to you). Two invariants: a failed or partial fetch must skip the diff entirely rather than fabricate transitions, and a poller with no network exits 0 and leaves the old snapshot with its honest `fetched_at`. A poller may also be scoped per machine — the GitHub poller takes an owner filter (`--owner`, `$DAYLOG_GH_OWNERS`, or `gh_owners` in `<data>/config.json`, in that precedence) because one machine is rarely one context, and a work laptop should not narrate the side project's PRs. Scope is a fetch-time concern, never a diff-time one: a PR leaving scope stops being tracked, it is not narrated as closed. New integrations are new pollers; the core never changes. Pollers shell out to the provider's own CLI where one exists (`gh api` for GitHub) rather than speaking HTTP natively: auth comes for free from the tool the machine already uses, and the failure modes stay honest — `gh` absent or unauthenticated means skip the diff and keep the stale snapshot. The daylog binary itself stays dependency-free for everything except polling.
+**Pollers** follow one shared pattern, established by the GitHub poller and reused by every future integration: a systemd user timer fires `daylog poll <name>`; the poller fetches current state from the external API; writes the snapshot atomically; diffs against the previous snapshot; and emits `transition` events *only for meaningful milestones* (PR merged, review decision changed, issue moved column, issue assigned to you). Routine status such as CI checks remains in the live snapshot and never becomes log history. Two invariants: a failed or partial fetch must skip the diff entirely rather than fabricate transitions, and a poller with no network exits 0 and leaves the old snapshot with its honest `fetched_at`. A poller may also be scoped per machine — the GitHub poller takes an owner filter (`--owner`, `$DAYLOG_GH_OWNERS`, or `gh_owners` in `<data>/config.json`, in that precedence) because one machine is rarely one context, and a work laptop should not narrate the side project's PRs. Scope is a fetch-time concern, never a diff-time one: a PR leaving scope stops being tracked, it is not narrated as closed. New integrations are new pollers; the core never changes. Pollers shell out to the provider's own CLI where one exists (`gh api` for GitHub) rather than speaking HTTP natively: auth comes for free from the tool the machine already uses, and the failure modes stay honest — `gh` absent or unauthenticated means skip the diff and keep the stale snapshot. The daylog binary itself stays dependency-free for everything except polling.
 
 ## 7. Planned integrations
 
@@ -195,7 +200,7 @@ The sync layer is deliberately a dumb file-replication concern *underneath* the 
 
 ## 9. Consumers
 
-All consumers read exactly one interface: `daylog today --json` (and `daylog render` for markdown). The terminal view ships first and validates the schema through real daily use. The bar widgets come second — the Omarchy plugin (a QML bar-widget plugin for Quickshell), its macOS sibling (a SwiftBar/xbar menu bar plugin in dependency-free JXA), and its Windows sibling (a system tray widget in dependency-free PowerShell/WinForms), all shelling out to `daylog today --json` and rendering entries grouped by type, with PR decorations from the snapshot join; each is by design the *thinnest* component in the system, replaceable in an afternoon, which is exactly why UI was deferred to the end. That all three exist without any knowing about the others is the dumb-consumer principle paying out. The EOD summarizer (§7.3) and any future phone view are additional consumers with no special privileges.
+All consumers read exactly one interface: `daylog today --json` (and `daylog render` for markdown). The terminal view ships first and validates the schema through real daily use. The bar widgets come second — the Omarchy plugin (a QML bar-widget plugin for Quickshell), its macOS sibling (a SwiftBar/xbar menu bar plugin in dependency-free JXA), and its Windows sibling (a system tray widget in dependency-free PowerShell/WinForms), all shelling out to `daylog today --json` and rendering narrative entries separately from the current PR snapshot; each is by design the *thinnest* component in the system, replaceable in an afternoon, which is exactly why UI was deferred to the end. That all three exist without any knowing about the others is the dumb-consumer principle paying out. Day navigation is the same payout in miniature: because the contract is `daylog today [DATE] --json` rather than a hardcoded today, a widget walks back through earlier days by re-running the read it already runs — the CLI needed nothing, and each widget's day cursor is transient UI state that never touches the store. Only `entries` is day-scoped, so stepping back moves the log alone while `open_todos` and `prs` keep describing now, which is why the attention badge stays truthful on any day. The EOD summarizer (§7.3) and any future phone view are additional consumers with no special privileges.
 
 ## 10. Failure modes and trust boundaries
 
@@ -207,7 +212,7 @@ Trust: everything runs as your user on your machines; agents can only call the C
 
 Phase 1 — the spine: event schema, `daylog add/today/render`, agent instructions in all three agents' configs. Live on it for a week; this validates the schema before anything is built on top.
 
-Phase 2 — GitHub poller: snapshot + diff + transitions, systemd user timer, ref-join in the `today` view. This is where the "16 PRs" problem is actually solved.
+Phase 2 — GitHub poller: snapshot + milestone transitions, systemd user timer, separate current-PR collection in the `today` view. This is where the "16 PRs" problem is actually solved.
 
 Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins. *(Deferred by decision: single-machine use is the reality today; revisit when a second machine actually joins.)*
 

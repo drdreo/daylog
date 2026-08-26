@@ -20,8 +20,10 @@ Windows ships — no runtime, no framework, no installer dependencies.
   warning triangle means the widget itself could not load the day.
 - **Open todos** — every open todo in one list, yours and the agents'. An
   agent proposal still awaiting your verdict is marked `*` and coloured.
-- **Today** — the day's entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are checked and dimmed.
+- **The day's log** — its entries with time, source, and live PR status on
+  entries that reference a PR. Closed todos are checked and dimmed. The
+  heading names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`)
+  and is itself the control for it: click to walk back a day.
 - **Open PRs** — the poller snapshot, marked STALE when it is hours old.
 
 ## Actions
@@ -31,10 +33,30 @@ Windows ships — no runtime, no framework, no installer dependencies.
 | Tray icon | Left or right click opens the menu |
 | Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
 | Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
+| Day heading | Click walks back a day; a `↩ Back to today` row appears while you are away from today |
 | Today entry / PR row | Click opens the PR in the browser |
 | Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders; **Exit** quits the widget |
 
 Hover any entry for the full detail (source, refs, close note).
+
+## Walking back through days
+
+The day heading is the control for the day, so navigation costs no rows of
+its own: clicking `◀ TODAY · MON, AUG 24` walks back a day and rebuilds the
+menu against it (`daylog today 2026-08-19 --json`). A single
+`↩ Back to today` row appears underneath while you are away, and only then.
+Only the log section moves: open todos are obligations that don't expire at
+midnight and PRs are live state, so the tray badge keeps counting what needs
+you *now* whichever day you are reading. An empty day says which day it was
+empty about, so an untouched Tuesday can't read as a quiet morning.
+
+It is a click and not `←`/`→` because an open Windows menu owns the arrow keys
+for its own row and submenu navigation. (The Omarchy panel is a real focused
+window, so there the arrow keys do this directly.) The SwiftBar sibling hides
+its way back under `⌥` on the heading row itself; WinForms menus have no
+alternate item, hence the extra row here. The day you picked expires after 10
+minutes: this is a *today* widget, and a tray icon that still describes
+Tuesday three hours later is worse than one that forgets.
 
 ## Install
 

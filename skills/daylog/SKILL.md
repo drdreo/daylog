@@ -1,6 +1,6 @@
 ---
 name: daylog
-description: Record substantive completed work with the daylog CLI — code shipped or merged, a bug diagnosed, an investigation that reached a conclusion, infrastructure changed. Use at most once per task, and only when the outcome still matters tomorrow. Never for questions answered, code explained, files read, trivial edits, or progress updates.
+description: Record substantive completed work with the daylog CLI — a meaningful implementation, diagnosis, decision, or system change. Use at most once per task, and only when the outcome still matters tomorrow. Never for PR or CI status, routine failures or retries, questions answered, files read, trivial edits, or progress updates.
 metadata:
   source: github.com/drdreo/daylog
 ---
@@ -15,11 +15,11 @@ something" but "would its absence lose something worth knowing".
 
 Log a task that left something behind:
 
-- code committed, pushed, or merged; a PR opened, reviewed, or landed
+- code, documentation, or product behavior materially changed
 - a bug reproduced, diagnosed, or fixed
 - research, an investigation, or a review that reached a conclusion
 - configuration, infrastructure, schema, or data changed
-- a substantial attempt that failed or was blocked — say what stopped it
+- a key milestone that materially changes what the human needs to know
 
 ## What does not
 
@@ -27,10 +27,20 @@ Log a task that left something behind:
 - reading, searching, or navigating a codebase
 - a trivial edit: a typo, a rename, a one-line tweak with no consequence
 - progress updates, or a second entry for work already logged
+- pull-request lifecycle or status: opened, pushed, review requested,
+  approved, merged, closed, or conflicted
+- CI and check status: pending, passing, failing, cancelled, retried, or fixed
+- a failed command, test, check, or attempt that produced no durable diagnosis
+  or decision
 - anything whose only artifact is the conversation itself
 
 When it is borderline, do not log. A missing entry costs nothing; a log
 full of noise stops being read.
+
+The GitHub poller owns PR lifecycle, review state, links, and check results.
+Do not duplicate those in an agent entry. A failure or blocker is not itself
+an outcome; log only a durable diagnosis or decision produced by investigating
+it, and name that result rather than the failed PR, check, or command.
 
 ## How to log
 
@@ -45,7 +55,8 @@ outside that request; when unsure, use `sidequest`.
 
 Add `--ref '#142'` or a Linear/Jira ID for each related PR or issue,
 repeating `--ref` as needed. State the outcome, not the reasoning: what is
-true now that was not true before.
+true now that was not true before. A reference can connect the underlying
+work to a PR, but does not make the PR's status loggable.
 
 ## Filing a todo
 
