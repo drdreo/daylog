@@ -50,7 +50,7 @@ daylog today --source agent     # only agent entries
 daylog render 2026-08-20        # any past day
 
 daylog poll gh                  # one GitHub poll cycle (see below)
-daylog poll gh --dry-run        # show transitions without writing anything
+daylog poll gh --dry-run        # preview the refresh without writing the snapshot
 daylog poll gh --owner myorg    # …only PRs under a given owner
 ```
 
@@ -80,13 +80,12 @@ machine already uses; `gh` absent, unauthenticated, or offline means the
 poll skips honestly (exit 0, old snapshot kept) rather than fabricating
 anything. Each cycle:
 
-1. fetches your open PRs plus any PR the last snapshot still thought was
-   open (that re-fetch is how a merge or close gets observed),
-2. replaces `state/gh-prs.json` atomically, and
-3. diffs against the previous snapshot, logging `transition` events with
-   `source: poller:gh` only for milestones worth narrating: **PR merged**,
-   **closed without merge**, and **review decisions** (approved / changes
-   requested). Check changes remain snapshot state and never become log events.
+1. fetches your open PRs and their current checks/review state, and
+2. replaces `state/gh-prs.json` atomically.
+
+GitHub polling is deliberately snapshot-only. PR lifecycle, checks, and review
+state never become daylog entries: agents record the underlying work outcome,
+while the separate **Open PRs** section owns the changing workflow state.
 
 ### Scoping the poll to one owner
 
@@ -125,11 +124,6 @@ Owners are matched case-insensitively, excludes beat includes, and no
 filter means every PR you author — the original behaviour. PRs outside the
 filter simply stop being tracked; falling out of scope is never narrated as
 a close.
-
-The first run only establishes a baseline. Nothing is logged for a PR
-merely appearing (opening it was your own action, already narrated). Check
-state is always snapshot-only: passing, pending, and failing changes are not
-work-log events.
 
 The day view keeps live PR state in an **Open PRs** section listing everything
 open, marked STALE when the snapshot is hours old. Narrative entries retain

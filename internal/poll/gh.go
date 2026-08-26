@@ -1,11 +1,9 @@
-// Package poll implements pollers: producers that snapshot external state,
-// diff it against the previous snapshot, and narrate meaningful changes as
-// transition events (§6). The GitHub poller establishes the pattern every
-// future integration reuses.
+// Package poll implements pollers that snapshot external state. The GitHub
+// poller deliberately stays snapshot-only: PR workflow state is useful in the
+// live PR section but does not belong in the work narrative.
 //
-// Two invariants hold throughout: a failed or partial fetch skips the diff
-// entirely rather than fabricate transitions, and a poller with no network
-// exits 0 and leaves the old snapshot with its honest fetched_at.
+// A failed or partial fetch never replaces the old snapshot, and a poller
+// with no network exits 0 and leaves its honest fetched_at intact.
 package poll
 
 import (
@@ -13,16 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/drdreo/daylog/internal/event"
 	"github.com/drdreo/daylog/internal/snapshot"
-	"github.com/drdreo/daylog/internal/store"
 )
 
 // ghRun executes the gh CLI. Pollers shell out to the provider's own tool
@@ -176,17 +171,10 @@ func (f ownerFilter) String() string {
 	return strings.Join(parts, ", ")
 }
 
-// Transition is one meaningful change observed between two snapshots.
-type Transition struct {
-	Ref  string
-	Kind string // pr_merged | pr_closed | review_approved | review_changes_requested
-	TLDR string
-	Meta map[string]any
-}
-
-// RunGH performs one poll cycle: fetch, diff, emit, save. It is the body of
-// `daylog poll gh` and of the systemd timer unit. ownerSpec narrows which
-// repository owners are tracked (see ownerFilter); empty means all.
+// RunGH performs one poll cycle: fetch and save the current open-PR snapshot.
+// It is the body of `daylog poll gh` and of the systemd timer unit. ownerSpec
+// narrows which repository owners are tracked (see ownerFilter); empty means
+// all.
 func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec string) error {
 	filter, err := parseOwnerFilter(ownerSpec)
 	if err != nil {
@@ -195,35 +183,18 @@ func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec strin
 
 	prev, err := snapshot.LoadGHPRs()
 	if err != nil {
-		// A corrupt cache is discardable: treat as a first run (baseline
-		// only, no diff) rather than fabricating transitions against it.
+		// A corrupt cache is discardable: establish a fresh snapshot rather
+		// than treating unreadable state as current.
 		fmt.Fprintf(stderr, "warning: previous snapshot unreadable (%v); establishing a fresh baseline\n", err)
 		prev = nil
 	}
 
-	cur, filter, err := fetchGHPRs(prev, now, filter)
+	cur, filter, err := fetchGHPRs(now, filter)
 	if err != nil {
 		fmt.Fprintf(stderr, "gh poll: fetch failed, keeping previous snapshot: %v\n", err)
 		return nil // no network / no gh is not an error state (§6)
 	}
 
-	var transitions []Transition
-	if prev != nil {
-		transitions = diffGHPRs(prev, cur)
-	}
-
-	for _, t := range transitions {
-		e := transitionEvent(t, now)
-		if dryRun {
-			fmt.Fprintf(stdout, "would log: %s (%s)\n", t.TLDR, t.Ref)
-			continue
-		}
-		// Events before snapshot: a crash between the two re-emits
-		// duplicates next run, which beats losing the narrative.
-		if err := store.Append(e); err != nil {
-			return fmt.Errorf("append transition: %w", err)
-		}
-	}
 	if !dryRun {
 		if err := snapshot.SaveGHPRs(cur); err != nil {
 			return err
@@ -234,10 +205,12 @@ func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec strin
 	if !filter.empty() {
 		scope = fmt.Sprintf(" (owners: %s)", filter)
 	}
-	if prev == nil {
-		fmt.Fprintf(stdout, "gh poll: baseline snapshot of %d PRs%s (no transitions on first run)\n", len(cur.PRs), scope)
+	if dryRun {
+		fmt.Fprintf(stdout, "gh poll: would snapshot %d open PRs%s\n", len(cur.PRs), scope)
+	} else if prev == nil {
+		fmt.Fprintf(stdout, "gh poll: baseline snapshot of %d open PRs%s\n", len(cur.PRs), scope)
 	} else {
-		fmt.Fprintf(stdout, "gh poll: %d PRs tracked%s, %d transitions\n", len(cur.PRs), scope, len(transitions))
+		fmt.Fprintf(stdout, "gh poll: snapshot refreshed with %d open PRs%s\n", len(cur.PRs), scope)
 	}
 	return nil
 }
@@ -269,15 +242,14 @@ type ghCheckNode struct {
 	State      string `json:"state"`
 }
 
-// fetchGHPRs builds the new snapshot: every PR currently open and authored
-// by the user, plus every PR the previous snapshot still thought was open —
-// re-fetching the latter is how a merge or close gets observed. Any error
-// aborts the whole fetch: a partial picture must never reach the diff.
-// The owner filter applies to both halves, so a PR that falls out of scope
-// simply stops being tracked; it is never narrated as closed.
+// fetchGHPRs builds the new snapshot from every PR currently open and authored
+// by the user. Any error aborts the whole fetch: a partial picture must never
+// replace the previous snapshot. A PR that is merged, closed, or falls out of
+// scope simply leaves the live collection; none of those states becomes a log
+// event.
 // It returns the resolved filter (with @me expanded) so callers can report
 // the scope they actually polled rather than the token they were given.
-func fetchGHPRs(prev *snapshot.GHPRs, now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter, error) {
+func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter, error) {
 	filter, err := filter.resolveSelf()
 	if err != nil {
 		return nil, filter, err
@@ -315,13 +287,6 @@ func fetchGHPRs(prev *snapshot.GHPRs, now time.Time, filter ownerFilter) (*snaps
 		}
 		track(key{it.Repository.NameWithOwner, it.Number})
 	}
-	if prev != nil {
-		for _, pr := range prev.PRs {
-			if pr.State == "open" && filter.allows(pr.Repo) {
-				track(key{pr.Repo, pr.Number})
-			}
-		}
-	}
 	sort.Slice(order, func(i, j int) bool {
 		if order[i].repo != order[j].repo {
 			return order[i].repo < order[j].repo
@@ -342,6 +307,9 @@ func fetchGHPRs(prev *snapshot.GHPRs, now time.Time, filter ownerFilter) (*snaps
 		var v ghPRView
 		if err := json.Unmarshal(out, &v); err != nil {
 			return nil, filter, fmt.Errorf("parse gh pr view output for %s#%d: %w", k.repo, k.number, err)
+		}
+		if strings.ToLower(v.State) != "open" {
+			continue // merged or closed between search and detail fetch
 		}
 		ref := fmt.Sprintf("gh:pr:%s#%d", k.repo, k.number)
 		cur.PRs[ref] = snapshot.PR{
@@ -393,94 +361,4 @@ func reviewFrom(decision string) string {
 		return "none"
 	}
 	return strings.ToLower(decision)
-}
-
-// diffGHPRs narrates the meaningful milestones between two snapshots (§6):
-// merged, closed without merge, and review decisions. Check state stays in
-// the live PR snapshot instead of becoming daylog history: the Open PRs
-// section already shows it, and routine CI flips are not work outcomes.
-// A PR appearing is not a transition — opening it was the producer's own
-// action, already narrated by its work entry.
-func diffGHPRs(old, cur *snapshot.GHPRs) []Transition {
-	var refs []string
-	for ref := range cur.PRs {
-		if _, existed := old.PRs[ref]; existed {
-			refs = append(refs, ref)
-		}
-	}
-	sort.Strings(refs)
-
-	var out []Transition
-	for _, ref := range refs {
-		o, n := old.PRs[ref], cur.PRs[ref]
-		add := func(kind, tldr string, meta map[string]any) {
-			if meta == nil {
-				meta = map[string]any{}
-			}
-			meta["kind"] = kind
-			if n.URL != "" {
-				meta["url"] = n.URL
-			}
-			out = append(out, Transition{Ref: ref, Kind: kind, TLDR: tldr, Meta: meta})
-		}
-		title := clip(n.Title, 240)
-
-		if o.State == "open" && n.State != "open" {
-			switch n.State {
-			case "merged":
-				add("pr_merged", "PR merged: "+title, nil)
-			case "closed":
-				add("pr_closed", "PR closed without merge: "+title, nil)
-			}
-			continue // a finished PR's checks and reviews no longer matter
-		}
-		if n.State != "open" {
-			continue
-		}
-		if n.Review != o.Review {
-			switch n.Review {
-			case "approved":
-				add("review_approved", "Review approved: "+title,
-					map[string]any{"from": o.Review, "to": n.Review})
-			case "changes_requested":
-				add("review_changes_requested", "Changes requested: "+title,
-					map[string]any{"from": o.Review, "to": n.Review})
-			}
-		}
-	}
-	return out
-}
-
-// transitionEvent shapes a Transition as an event through the same schema
-// every producer uses. Ctx stays empty: a timer has no meaningful cwd.
-func transitionEvent(t Transition, now time.Time) event.Event {
-	return event.Event{
-		ID:     event.NewID(now),
-		TS:     now.Format(time.RFC3339),
-		Host:   hostname(),
-		Source: "poller:gh",
-		Type:   event.TypeTransition,
-		TLDR:   t.TLDR,
-		Refs:   []string{t.Ref},
-		Meta:   t.Meta,
-	}
-}
-
-func hostname() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return h
-}
-
-// clip bounds a title so the composed tldr stays under the 280-char write
-// limit. Clipping here is honest — the full title lives in GitHub, the
-// event only points at it.
-func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
 }

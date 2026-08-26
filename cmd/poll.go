@@ -21,19 +21,17 @@ var pollCmd = &cobra.Command{
 	Use:   "poll <name>",
 	Short: "Run a poller once (the same path the systemd timer uses)",
 	Long: `Fetch current state from an external system, refresh its snapshot under
-<data>/state/, and log transition events for meaningful changes (§6).
-A fetch failure keeps the previous snapshot and exits 0 — a poller with
-no network is not an error state. Available pollers: gh.`,
+<data>/state/. A fetch failure keeps the previous snapshot and exits 0 — a
+poller with no network is not an error state. Available pollers: gh.`,
 }
 
 var pollGHCmd = &cobra.Command{
 	Use:   "gh",
-	Short: "Poll GitHub for your open PRs (merges, check flips, reviews)",
+	Short: "Refresh the snapshot of your open GitHub PRs",
 	Long: `Track every open PR you authored via the gh CLI (which supplies auth).
-Snapshot goes to <data>/state/gh-prs.json; transitions are logged for
-PRs merged or closed, checks flipping red/green, and review decisions.
-The first run only establishes the baseline. Timer units to run this
-periodically are in docs/systemd/.
+The current snapshot goes to <data>/state/gh-prs.json and powers the separate
+Open PRs section. PR lifecycle, checks, and review state never become work-log
+events. Timer units to run this periodically are in docs/systemd/.
 
 One machine is rarely one context, so --owner (repeatable, or a comma-
 separated list) narrows the poll to certain repository owners; $DAYLOG_GH_OWNERS
@@ -46,8 +44,7 @@ owner, and @me stands for your own account:
   daylog poll gh --owner @me              # only your personal repos
   daylog poll gh --owner '!oldorg'        # everything but that one
 
-PRs outside the filter are simply not tracked — dropping out of scope is
-never narrated as a close.`,
+PRs outside the filter are simply not tracked.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		owners, err := resolveGHOwners(cmd)
@@ -88,7 +85,7 @@ func init() {
 		}
 		return cmd.Help()
 	}
-	pollGHCmd.Flags().BoolVar(&pollDryRun, "dry-run", false, "print transitions without writing events or the snapshot")
+	pollGHCmd.Flags().BoolVar(&pollDryRun, "dry-run", false, "show the refreshed snapshot size without writing it")
 	pollGHCmd.Flags().StringSliceVar(&pollOwners, "owner", nil, "only track PRs under these repo owners (repeatable; !owner excludes, @me is you)")
 	pollCmd.AddCommand(pollGHCmd)
 	rootCmd.AddCommand(pollCmd)
