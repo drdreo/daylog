@@ -179,7 +179,7 @@ func (f ownerFilter) String() string {
 // Transition is one meaningful change observed between two snapshots.
 type Transition struct {
 	Ref  string
-	Kind string // pr_merged | pr_closed | checks_failing | checks_passing | review_approved | review_changes_requested
+	Kind string // pr_merged | pr_closed | review_approved | review_changes_requested
 	TLDR string
 	Meta map[string]any
 }
@@ -395,11 +395,12 @@ func reviewFrom(decision string) string {
 	return strings.ToLower(decision)
 }
 
-// diffGHPRs narrates the meaningful changes between two snapshots (§6):
-// merged, closed without merge, checks flipped red or back to green, and
-// review decisions. A PR appearing is not a transition — opening it was the
-// producer's own action, already narrated by its work entry. Neither is a
-// pending checks state: only settled flips are worth the human's attention.
+// diffGHPRs narrates the meaningful milestones between two snapshots (§6):
+// merged, closed without merge, and review decisions. Check state stays in
+// the live PR snapshot instead of becoming daylog history: the Open PRs
+// section already shows it, and routine CI flips are not work outcomes.
+// A PR appearing is not a transition — opening it was the producer's own
+// action, already narrated by its work entry.
 func diffGHPRs(old, cur *snapshot.GHPRs) []Transition {
 	var refs []string
 	for ref := range cur.PRs {
@@ -435,14 +436,6 @@ func diffGHPRs(old, cur *snapshot.GHPRs) []Transition {
 		}
 		if n.State != "open" {
 			continue
-		}
-		if n.Checks == "failing" && o.Checks != "failing" {
-			add("checks_failing", "Checks failing: "+title,
-				map[string]any{"from": o.Checks, "to": n.Checks})
-		}
-		if n.Checks == "passing" && o.Checks == "failing" {
-			add("checks_passing", "Checks green again: "+title,
-				map[string]any{"from": o.Checks, "to": n.Checks})
 		}
 		if n.Review != o.Review {
 			switch n.Review {

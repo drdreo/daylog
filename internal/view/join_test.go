@@ -21,7 +21,7 @@ func testSnap() *snapshot.GHPRs {
 	}
 }
 
-func TestJoinGHDecoratesByRefEquality(t *testing.T) {
+func TestJoinGHLeavesNarrativeEntriesAlone(t *testing.T) {
 	d := Day{
 		Entries: []Entry{
 			{ID: "A", Refs: []string{"linear:ABC-1", "gh:pr:o/r#7"}},
@@ -33,14 +33,11 @@ func TestJoinGHDecoratesByRefEquality(t *testing.T) {
 	}
 	JoinGH(&d, testSnap())
 
-	if d.Entries[0].PR == nil || d.Entries[0].PR.Checks != "failing" {
-		t.Fatalf("entry A not joined: %+v", d.Entries[0].PR)
+	if got := strings.Join(d.Entries[0].Refs, ","); got != "linear:ABC-1,gh:pr:o/r#7" {
+		t.Fatalf("entry refs changed: %q", got)
 	}
-	if d.Entries[1].PR != nil || d.Entries[2].PR != nil {
-		t.Fatal("entries without a matching ref must stay undecorated")
-	}
-	if d.OpenTodos[0].PR == nil || d.OpenTodos[0].PR.State != "merged" {
-		t.Fatal("open todos must be joined too")
+	if got := strings.Join(d.OpenTodos[0].Refs, ","); got != "gh:pr:o/r#3" {
+		t.Fatalf("todo refs changed: %q", got)
 	}
 	if d.PRsFetchedAt != "2026-08-23T12:00:00Z" {
 		t.Errorf("prs_fetched_at = %q", d.PRsFetchedAt)
@@ -61,7 +58,7 @@ func TestJoinGHListsOnlyOpenPRsSorted(t *testing.T) {
 func TestJoinGHNilSnapshotIsNoop(t *testing.T) {
 	d := Day{Entries: []Entry{{ID: "A", Refs: []string{"gh:pr:o/r#7"}}}}
 	JoinGH(&d, nil)
-	if d.Entries[0].PR != nil || len(d.PRs) != 0 || d.PRsFetchedAt != "" {
+	if len(d.PRs) != 0 || d.PRsFetchedAt != "" {
 		t.Fatal("nil snapshot must leave the day untouched")
 	}
 }
@@ -85,7 +82,7 @@ func TestPRStatusLabel(t *testing.T) {
 	}
 }
 
-func TestMarkdownRendersPRSectionAndDecorations(t *testing.T) {
+func TestMarkdownKeepsPRStatusInItsOwnSection(t *testing.T) {
 	d := Day{
 		Date:        "2026-08-23",
 		GeneratedAt: "2026-08-23T12:30:00Z",
@@ -93,7 +90,6 @@ func TestMarkdownRendersPRSectionAndDecorations(t *testing.T) {
 			ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", TS: "2026-08-23T09:00:00Z",
 			Source: "agent:claude", Type: "work", TLDR: "Fixed the race",
 			Refs: []string{"gh:pr:o/r#7"},
-			PR:   &snapshot.PR{State: "open", Checks: "failing", Review: "none"},
 		}},
 	}
 	JoinGH(&d, testSnap())
@@ -104,8 +100,11 @@ func TestMarkdownRendersPRSectionAndDecorations(t *testing.T) {
 	if !strings.Contains(md, "**o/r#7** Fix races — checks failing · changes requested") {
 		t.Errorf("missing PR line:\n%s", md)
 	}
-	if !strings.Contains(md, "Fixed the race (gh:pr:o/r#7) [checks failing · changes requested]") {
-		t.Errorf("missing entry decoration:\n%s", md)
+	if !strings.Contains(md, "Fixed the race (gh:pr:o/r#7)") {
+		t.Errorf("missing work entry:\n%s", md)
+	}
+	if strings.Contains(md, "Fixed the race (gh:pr:o/r#7) [") {
+		t.Errorf("PR status leaked into work entry:\n%s", md)
 	}
 	if strings.Contains(md, "o/r#3") {
 		t.Errorf("merged PR leaked into Open PRs:\n%s", md)

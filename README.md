@@ -4,7 +4,7 @@ A personal ledger of what every coding agent (and the human) did today.
 Producers append immutable events through one CLI; the daily view is derived
 by folding over them. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full
 design; this build covers the spine (schema + `add`/`done`/`reclassify`/
-`today`/`render`), the GitHub poller with the PR snapshot join in the day
+`today`/`render`), the GitHub poller with the current-PR snapshot in the day
 view, and the bar widgets (Omarchy on Linux, SwiftBar on macOS, a tray
 widget on Windows 11).
 (Multi-machine sync — Phase 3 — is deliberately deferred.)
@@ -84,9 +84,9 @@ anything. Each cycle:
    open (that re-fetch is how a merge or close gets observed),
 2. replaces `state/gh-prs.json` atomically, and
 3. diffs against the previous snapshot, logging `transition` events with
-   `source: poller:gh` for the changes worth narrating: **PR merged**,
-   **closed without merge**, **checks flipped red/green**, and **review
-   decisions** (approved / changes requested).
+   `source: poller:gh` only for milestones worth narrating: **PR merged**,
+   **closed without merge**, and **review decisions** (approved / changes
+   requested). Check changes remain snapshot state and never become log events.
 
 ### Scoping the poll to one owner
 
@@ -127,13 +127,14 @@ filter simply stop being tracked; falling out of scope is never narrated as
 a close.
 
 The first run only establishes a baseline. Nothing is logged for a PR
-merely appearing (opening it was your own action, already narrated) or for
-checks going pending (a fresh push is not news).
+merely appearing (opening it was your own action, already narrated). Check
+state is always snapshot-only: passing, pending, and failing changes are not
+work-log events.
 
-The day view joins the snapshot by ref equality: entries referencing a PR
-show its live status, and an **Open PRs** section lists everything open —
-marked STALE when the snapshot is hours old. In `--json`, entries gain a
-`pr` object and the day gains `prs` + `prs_fetched_at`.
+The day view keeps live PR state in an **Open PRs** section listing everything
+open, marked STALE when the snapshot is hours old. Narrative entries retain
+their refs without being decorated by changing PR or CI status. In `--json`,
+the day exposes `prs` + `prs_fetched_at` as a separate collection.
 
 The poller itself is cross-platform — `daylog poll gh` works anywhere the
 `gh` CLI does. Only the scheduling mechanism is per-platform; systemd is
@@ -233,7 +234,7 @@ already applied, so consumers stay dumb:
   "generated_at": "2026-08-23T18:02:11+02:00",
   "entries":    [ { "id", "ts", "source", "type", "original_type?", "tldr",
                     "refs", "ctx", "done", "done_ts?", "done_note?",
-                    "meta?", "pr?" } ],
+                    "meta?" } ],
   "open_todos":  [ "…every open todo, agent- and human-filed, any day…" ],
   "needs_triage":[ "…filters open_todos: agent proposals awaiting a verdict…" ],
   "prs":        [ { "ref", "repo", "number", "title", "url", "state",

@@ -102,9 +102,6 @@ func entryLine(e Entry) string {
 	if len(e.Refs) > 0 {
 		b.WriteString(" (" + strings.Join(e.Refs, ", ") + ")")
 	}
-	if e.PR != nil {
-		b.WriteString(fmt.Sprintf(" [%s]", prStatusLabel(e.PR)))
-	}
 	// Both moments, not one: the leading clock is when the todo was finished,
 	// so the line still has to say when it was taken on.
 	if filed := filedStamp(e); filed != "" {

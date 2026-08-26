@@ -52,26 +52,25 @@ func TestDiffMergedAndClosed(t *testing.T) {
 	}
 }
 
-func TestDiffChecksFlips(t *testing.T) {
+func TestDiffCheckFlipsAreSnapshotOnly(t *testing.T) {
 	cases := []struct {
 		oldChecks, newChecks string
-		want                 []string
 	}{
-		{"passing", "failing", []string{"checks_failing"}},
-		{"pending", "failing", []string{"checks_failing"}},
-		{"none", "failing", []string{"checks_failing"}},
-		{"failing", "passing", []string{"checks_passing"}},
-		{"failing", "pending", nil}, // not settled yet: wait
-		{"pending", "passing", nil}, // was never red: routine
-		{"passing", "pending", nil}, // a fresh push, not news
-		{"passing", "passing", nil},
+		{"passing", "failing"},
+		{"pending", "failing"},
+		{"none", "failing"},
+		{"failing", "passing"},
+		{"failing", "pending"},
+		{"pending", "passing"},
+		{"passing", "pending"},
+		{"passing", "passing"},
 	}
 	for _, c := range cases {
 		old := snapWith(pr("gh:pr:a/b#1", "open", c.oldChecks, "none"))
 		cur := snapWith(pr("gh:pr:a/b#1", "open", c.newChecks, "none"))
 		got := kinds(diffGHPRs(old, cur))
-		if fmt.Sprint(got) != fmt.Sprint(c.want) {
-			t.Errorf("%s→%s: kinds = %v, want %v", c.oldChecks, c.newChecks, got, c.want)
+		if len(got) != 0 {
+			t.Errorf("%s→%s: kinds = %v, want no transition", c.oldChecks, c.newChecks, got)
 		}
 	}
 }

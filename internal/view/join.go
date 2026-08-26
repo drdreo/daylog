@@ -7,29 +7,15 @@ import (
 	"github.com/drdreo/daylog/internal/snapshot"
 )
 
-// JoinGH is the read-time join between the narrative and the now (§3):
-// entries referencing a PR gain its live status from the snapshot, and the
-// day view gains the full list of open PRs. Ref equality is the whole join —
-// no producer or consumer knows anything else about the other side (§4.3).
+// JoinGH adds the current open-PR snapshot to the day view (§3). Live PR
+// status stays in that separate collection rather than decorating narrative
+// entries: the log records work outcomes, while the Open PRs section owns
+// checks, review state, and links.
 func JoinGH(d *Day, snap *snapshot.GHPRs) {
 	if snap == nil {
 		return
 	}
 	d.PRsFetchedAt = snap.FetchedAt
-
-	decorate := func(entries []Entry) {
-		for i := range entries {
-			for _, ref := range entries[i].Refs {
-				if pr, ok := snap.PRs[ref]; ok {
-					entries[i].PR = &pr
-					break
-				}
-			}
-		}
-	}
-	decorate(d.Entries)
-	decorate(d.OpenTodos)
-	decorate(d.NeedsTriage)
 
 	for _, pr := range snap.PRs {
 		if pr.State == "open" {
@@ -44,8 +30,7 @@ func JoinGH(d *Day, snap *snapshot.GHPRs) {
 	})
 }
 
-// prStatusLabel compresses a PR's live state into the short annotation shown
-// next to entries and in the Open PRs section.
+// prStatusLabel compresses a PR's live state for the Open PRs section.
 func prStatusLabel(pr *snapshot.PR) string {
 	if pr.State != "open" {
 		return pr.State
