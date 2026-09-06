@@ -6,10 +6,11 @@
 ---
 
 > **Next implementation:** [Gatekeeper architecture and plan](docs/gatekeeper-plan.md).
-> The selected direction is report-first capture with a separate pi/Luna editor,
-> not stricter reporting instructions or reminder hooks. That plan supersedes
-> the future producer/editor direction in §§5.1, 6, and 7.3 below; these sections
-> retain the original design for context. The gatekeeper is not implemented yet.
+> The selected direction is a clean-break, report-first system with a separate
+> pi/Luna editor, not stricter reporting instructions or reminder hooks. No
+> backward compatibility is required: that plan supersedes the producer,
+> schema, CLI, and consumer constraints below. This document retains the
+> original design for context; the gatekeeper is not implemented yet.
 > See the [research audit](docs/automatic-logging-research.md) for limitations of
 > the current implementation, including concurrency and correction semantics.
 

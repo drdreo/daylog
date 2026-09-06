@@ -5,7 +5,7 @@
 - **Repository inspected:** `979cd7b`
 - **Method:** local implementation/configuration audit, scratch-store experiments, three independent GPT-5.6 Sol/xhigh researchers (comparables, harness interfaces, skeptical architecture), and primary-source verification.
 
-**Follow-up decision:** the [gatekeeper architecture and implementation plan](gatekeeper-plan.md) selects a report-first queue with a one-shot pi/Luna editor. It supersedes this report's initial hook-first build order, queue-storage options, model suggestion, and shadow migration sketch. This document preserves the research and rationale.
+**Follow-up decision:** the [gatekeeper architecture and implementation plan](gatekeeper-plan.md) selects a report-first queue with a one-shot pi/Luna editor. It supersedes this report's initial hook-first build order, queue-storage options, model suggestion, and shadow migration sketch. The selected implementation is a clean break: no backward compatibility, old-schema fallbacks, or migration work is required. This document preserves the historical research and rationale, not compatibility requirements.
 
 ## Recommendation in one paragraph
 

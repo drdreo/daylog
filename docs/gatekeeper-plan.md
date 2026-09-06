@@ -10,7 +10,11 @@ This is the actionable successor to the [automatic-logging research](automatic-l
 
 **Working agents report what happened. A small pi agent decides what belongs in the journal. Go owns persistence and publication.**
 
-Keep the existing Go CLI, immutable JSONL ledger, todo workflow, GitHub snapshots, and widgets. Add a local candidate queue and a one-shot pi runner using **`openai-codex/gpt-5.6-luna`**, verified available in the installed pi catalog. Model/provider selection is configurable; speed and editorial quality still need evaluation.
+Build a clean gatekeeper-first version. Reuse Go, append-only JSONL, and useful code where they fit; keep the product jobs of human quick-capture, explicit todos, separate GitHub snapshots, and lightweight widgets. Add a local candidate queue and a one-shot pi runner using **`openai-codex/gpt-5.6-luna`**, verified available in the installed pi catalog. Model/provider selection is configurable; speed and editorial quality still need evaluation.
+
+**No backward compatibility is required.** Replace old schemas, CLI contracts, config keys, instruction text, and consumer fields outright when that makes the design cleaner. Ship producers, store/fold, and widgets together against one new contract. Do not build legacy routing, deprecated aliases, dual readers/writers, old-format fallbacks, or a migration framework. Existing code is reusable material, not a compatibility constraint.
+
+Initialize a fresh, explicitly versioned store for the new implementation. If the selected directory already contains unsupported data, refuse to use it and require a fresh location; do not silently convert, mix, overwrite, or delete it. Old history/config can remain archived outside the active store without being readable by the new binary. Importing old records is out of scope.
 
 The working agent no longer has to apply our whole materiality rubric or decide whether an outcome is worth the human's attention. It reports facts, findings, decisions, and changes, including incomplete results honestly. Unnecessary reports are acceptable private inputs, not automatic visible entries. We are not asking it to narrate every tool call.
 
@@ -29,7 +33,7 @@ flowchart TD
     human["Human daylog add"] --> writer
     writer --> ledger["events/YYYY-MM-DD.jsonl"]
     ledger --> view["Fold / today --json"]
-    view --> widgets["Terminal + existing widgets"]
+    view --> widgets["Terminal + widgets on the new view contract"]
     poller["GitHub poller"] --> snapshot["state/gh-prs.json"]
     snapshot -->|separate Open PRs collection| view
 ```
@@ -46,37 +50,36 @@ Hooks are not a second publisher. They supply evidence to the same editor when r
 | Go publisher | Schema/target validation, revision checks, replay safety, immutable events | Inventing facts or treating model confidence as proof |
 | Human | Explicit notes/todos, corrections, preferences, live-mode opt-in | Reviewing every candidate |
 
-## 3. CLI behavior and migration
+## 3. CLI behavior and operating modes
 
-All new commands, flags, settings, and schemas below are proposed, not available yet.
+All commands, flags, settings, and schemas below describe the proposed new contract, not an implemented interface or a promise to preserve the old one.
 
-Keep the familiar interface:
+Use a simple reporting interface:
 
 ```sh
 daylog add --type work --ref '#142' "Fixed the token-refresh race"
 ```
 
-For an `agent:*` source in gatekeeper mode, this captures context, durably enqueues a candidate, and immediately returns **`queued <candidate-id>`**, not `logged`. No model call runs on the producer's critical path. Failed persistence is an explicit error; never pretend that an unqueued report was accepted.
+For an `agent:*` source, this always captures context, durably enqueues a candidate, and immediately returns **`queued <candidate-id>`**, not `logged`. No model call runs on the producer's critical path. Failed persistence is an explicit error; never pretend that an unqueued report was accepted.
 
 Routing is deliberately narrow:
 
-- Agent `work`, `sidequest`, and `note`: candidates in gatekeeper mode. Using the default `note` type must not bypass filtering.
-- Human narrative entries: direct writes, as today. Human quick-capture is not subject to automated relevance vetoes.
-- Explicit agent `todo`: retain today's human-review proposal workflow. Liberal narrative reporting must not become liberal todo creation.
-- `done`, `reclassify`, `accept`, and `decline`: retain their meanings. The gatekeeper cannot create, close, or approve obligations.
-- Poller snapshots: unchanged; never pass PR/CI status through as work outcomes.
+- Agent `work`, `sidequest`, and `note`: always candidates. No type, mode, missing model, or stopped worker enables direct narrative publication.
+- Human narrative entries: direct writes. Human quick-capture is not subject to automated relevance vetoes.
+- Explicit agent `todo`: a proposal for the human, not a journal candidate. Liberal narrative reporting must not become liberal todo creation.
+- Human commands handle todo adoption/decline/completion and narrative corrections. Consolidate command names where useful; the old `reclassify` command need not survive separately from `amend`. The gatekeeper cannot create, close, or approve obligations.
+- Poller snapshots: separate current state; never pass PR/CI status through as work outcomes.
 
-Three machine-scoped modes avoid a double-publisher migration:
+There are only two machine-scoped worker modes. Neither changes intake:
 
 | Mode | Agent narrative intake | Worker |
 | --- | --- | --- |
-| `legacy` (unconfigured default) | Direct writes; existing restrictive skill | No gatekeeper publication |
-| `shadow` | Queue only; relaxed reporting instructions | Persist decisions; no ledger publication |
-| `live` | Queue only; relaxed reporting instructions | Apply validated editorial decisions |
+| `shadow` (default) | Always queue | Persist decisions; no ledger publication |
+| `live` | Always queue | Apply validated editorial decisions |
 
-**Shadow intentionally has no parallel direct agent writer.** This differs from the research's initial migration sketch. Human notes and existing history remain visible. Shadow is a short evaluation state, not a second inbox or a promise that queued work has been published.
+**There is no legacy/direct-agent mode and no parallel publisher.** Shadow is a short evaluation state, not a second inbox or a promise that queued work has been published. Human notes written into the new store remain visible in either mode.
 
-Switch mode and installed instructions together. The new skill should inspect the intake mode once per session (proposed `daylog status --json`): legacy keeps the old bar, shadow/live use factual reporting. Never relax the installed skill while leaving a legacy publisher active. Switching back to legacy does not flush pending candidates into the journal. Restart/update active agent sessions at cutover or rollback so cached liberal instructions cannot keep running against a restored direct writer.
+The skill has one instruction set: report facts and distinguish attempted from completed work; the editor handles relevance and grouping. It does not inspect the mode or carry the old materiality rubric. Pause publication by stopping the worker or returning to shadow. Intake keeps queuing and never auto-flushes reports as journal entries.
 
 The first release also exposes:
 
@@ -102,8 +105,8 @@ Choose **atomic JSON files plus a portable OS-backed lock**, not a database, for
 
 ```text
 <data>/
-  events/                         # canonical curated history, unchanged format
-  state/                          # existing disposable poller snapshots
+  events/                         # canonical curated history, new event schema
+  state/                          # disposable poller snapshots
   capture/                        # private, machine-local; never synced
     candidates/                   # immutable normalized candidate revisions
     evidence/                     # bounded sensitive excerpts, separately retained
@@ -125,7 +128,7 @@ A versioned candidate contains:
 
 - Candidate ID, producer identity, report kind, report text, typed refs, capture time.
 - Harness/session/request-or-turn identity when available, native event ID and content revision, optional known parent/task linkage.
-- Original cwd, worktree, branch, HEAD, and repository identity including host; retain current `ctx.repo` compatibility for existing refs/widgets.
+- Original cwd, worktree, branch, HEAD, and structured repository identity including host. Refs and widgets use this new representation directly; no old `ctx.repo` alias.
 - Evidence IDs/hashes, bounded excerpts, and completeness/terminal-state markers.
 - Explicit internal-worker origin and whether the input was a report, hook, or recovery record.
 
@@ -149,7 +152,7 @@ Editorial disposition: `skip`, `hold`, or association with one or more published
 
 Persist and validate a complete plan **before** applying any action. Code assigns stable plan/operation IDs; the model does not mint publication identities. A retry applies the saved plan rather than asking the model to phrase the outcome again.
 
-Under a shared store lock, all upgraded writers use the same protocol:
+Under a shared store lock, every writer uses the same protocol:
 
 1. Check the operation's publication key against the ledger/rebuildable index.
 2. Check current target revision and human-protection state.
@@ -162,13 +165,13 @@ Add append-only `amend`, `dismiss`, `restore`, and `merge` semantics. A merge af
 
 Store code must detect/report malformed middle records. Define explicit handling for torn trailing writes before replay; never append after an unexamined partial line and silently concatenate two records. Read-only views may degrade with diagnostics, but publication must not proceed on an ambiguous dedup scan. Repair, when necessary, should be explicit and preserve the damaged bytes for inspection.
 
-This is local replay-safe publication, not a claim of semantic or distributed exactly-once behavior. Older binaries that do not honor the locking protocol are not supported concurrent writers during cutover; `doctor` must expose build provenance.
+This is local replay-safe publication, not a claim of semantic or distributed exactly-once behavior. The new store has one supported schema/protocol; mismatched versions fail explicitly rather than taking an old write path. `doctor` exposes build and store versions.
 
 ### E. Keep occurrence time distinct from recording time
 
-Leave raw event `ts` as recording time and its existing file-partition key. Add optional validated `occurred_at` for captured narrative outcomes. Its source is the evidence/capture clock, never model-generated; if unknown, fall back honestly to report time.
+Define time explicitly in the new schema: every raw event has required `recorded_at`; narrative outcomes and todo lifecycle events also have required `occurred_at`. Partition event files by `recorded_at`. Source occurrence time from captured evidence, never the model; when the actual work time is unknown, intake uses report time and marks that basis honestly. This is missing-evidence handling, not old-schema fallback.
 
-Fold narrative entries by `occurred_at` with legacy `ts` fallback, preserving the captured offset/day. Todo closure still uses `done_ts`. Add the optional field to `today --json` and update timestamp selection in all three widgets and Markdown: changing day placement without changing displayed clocks would be misleading. No consumer needs to parse the queue or model output.
+The fold uses the captured occurrence offset/day for narrative placement and the completion event's occurrence time for completed todos. Expose one required `display_at` in the folded entry contract for sorting and display, with occurrence/recording/filing details separately available where useful. Update Markdown and all three widgets together. Remove old `ts`/`done_ts` compatibility branches instead of preserving ambiguous timestamp semantics. No consumer needs to parse the queue or model output.
 
 Amendment does not move an outcome into the amendment day. A new material milestone tomorrow is a new dated delta, not a rewrite claiming that yesterday's work already included it.
 
@@ -213,7 +216,7 @@ Start with conservative tunable limits: roughly one-minute quiet period, maximum
 
 ## 6. Capture fallback and privacy
 
-After the report-fed editor works, add pi `agent_settled`, Claude terminal/Stop hooks, and current Codex lifecycle hooks as thin adapters. Verify installed-version payloads and neutral response contracts with fixtures. Enqueue only; never block an agent on Luna or demand another turn to explain why it did not log.
+After the report-fed editor works, add pi `agent_settled`, Claude terminal/Stop hooks, and current Codex lifecycle hooks as thin adapters. Target verified current harness contracts; unsupported versions need an adapter/harness update, not a legacy integration path. Verify payloads and neutral response contracts with fixtures. Enqueue only; never block an agent on Luna or demand another turn to explain why it did not log.
 
 Use incremental native-session reconciliation to recover missed hooks and enrich incomplete reports. Share native identity/revision keys between hooks and replay where possible; relate distinct report and hook IDs at the episode/evidence level. Handle pi's branched/copied history, transcript lag, repeated Stop within a turn, interrupted sessions, and child lineage without claiming a session equals a task. No-session/hard-crash gaps without saved evidence are unavoidable and must be reported honestly.
 
@@ -227,19 +230,20 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 1. Define contracts and fixtures
 
-- [ ] Add candidate, receipt, editor-plan/action, publication-provenance, and correction schemas with validation and explicit versions.
-- [ ] Add typed gatekeeper settings (`legacy` default), binary build/version reporting, runner configuration, and a fake runner/clock seam.
+- [ ] Define one clean event/view contract plus candidate, receipt, editor-plan/action, provenance, correction, and config schemas with explicit versions. Remove old schema and timestamp constraints.
+- [ ] Add typed gatekeeper settings (`shadow` default, `live` opt-in), fresh-store initialization, build/store version reporting, runner configuration, and a fake runner/clock seam.
+- [ ] Keep candidate report size bounded independently of the concise published TLDR; do not force reporters to write publication-ready copy.
 - [ ] Create sanitized golden episodes for keep/skip/hold, duplicate reports, same task across agents, human correction, and unsupported claims.
 
-**Likely paths:** `internal/capture/`, `internal/curate/`, `internal/config/`, `cmd/version.go`, `testdata/gatekeeper/`.
+**Likely paths:** `internal/event/`, `internal/view/`, `internal/capture/`, `internal/curate/`, `internal/config/`, `cmd/version.go`, `testdata/gatekeeper/`.
 
-**Done when:** invalid schemas/settings fail loudly and old config/history fixtures remain valid. Confirm available pi flags/model ID without making a paid test call.
+**Done when:** the new schemas/settings validate strictly, fresh-store setup is non-destructive, and unsupported formats fail clearly. There is no old config/history test obligation. Confirm available pi flags/model ID without making a paid test call.
 
 ### 2. Build durable intake and queue operations
 
 - [ ] Implement the private atomic-file spool, portable locks, processing receipts, recovery, and idempotent native revisions.
 - [ ] Extract shared original-context capture from `cmd/root.go`; support known session metadata without requiring it.
-- [ ] Add `queue list`, `status`, and queue-facing `doctor` checks. Exercise intake directly before changing live `add` routing.
+- [ ] Add `queue list`, `status`, and queue-facing `doctor` checks. Exercise intake directly before wiring the producer CLI.
 
 **Likely paths:** `internal/capture/`, `internal/context/`, `cmd/queue.go`, `cmd/status.go`, `cmd/doctor.go`.
 
@@ -249,11 +253,11 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 - [ ] Add shared locking, durable `AppendOnce`, publication-key recovery, corruption diagnostics, and fault-injection tests.
 - [ ] Implement append-only amendment/dismissal/restoration/merge, human protection, and shared effective-target resolution.
-- [ ] Add occurrence-time handling to event/view/Markdown/widget clocks while preserving existing todo closure and snapshot behavior.
+- [ ] Implement the new event/view timestamps and update Markdown/widgets in the same change. Preserve the intended product semantics—todo completion belongs on its completion day, and PR state stays separate—not old field names.
 
 **Likely paths:** `internal/store/`, `internal/event/`, `internal/view/`, `cmd/root.go`, correction commands, all three widget directories.
 
-**Done when:** retry after append-before-ack creates one entry; human correction wins over stale automation; bookkeeping is invisible as work; midnight/backfill/legacy/todo fixtures and widget timestamp checks pass.
+**Done when:** retry after append-before-ack creates one entry; human correction wins over stale automation; bookkeeping is invisible as work; midnight/backfill/todo fixtures and new-contract widget timestamp checks pass.
 
 ### 4. Build the one-shot pi/Luna editorial loop
 
@@ -267,9 +271,9 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 5. Route agent reports and simplify reporting instructions
 
-- [ ] Wire `add` to mode-aware intake; retain human and explicit todo paths.
-- [ ] Change acknowledgements/help text to distinguish queued from logged; expose enough metadata for callers to track a report.
-- [ ] Update the canonical skill/instructions to branch on mode: liberal factual narrative reporting in shadow/live, current filtering in legacy; no competing publisher.
+- [ ] Replace direct agent narrative writes with mandatory queue intake; implement the deliberate human and explicit todo paths.
+- [ ] Make acknowledgements/help text distinguish queued from logged; expose enough metadata for callers to track a report. Do not retain old output aliases or deprecated routing flags.
+- [ ] Replace the canonical skill/instructions with one factual-reporting contract. No mode detection, old relevance rubric, or competing publisher.
 - [ ] Add minimal human correction/preferences persistence and keep pinned/dismissed outcomes in editorial context.
 
 **Likely paths:** `cmd/add.go`, `skills/daylog/SKILL.md`, `docs/AGENT_INSTRUCTIONS.md`, `internal/curate/`, command tests.
@@ -288,10 +292,10 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 7. Install, schedule, and verify end to end
 
-- [ ] Extend install/setup with explicit opt-ins, existing-config preservation, path quoting, trust handling, and reversible adapter/scheduler installation.
+- [ ] Build fresh install/setup with explicit opt-ins, new-schema config/store initialization, path quoting, trust handling, and reversible adapter/scheduler installation. Preserve unrelated harness settings/hooks; do not add old daylog config migration.
 - [ ] Schedule short `curate --once`/reconciliation runs using launchd here; provide systemd/Windows equivalents without adding a daemon requirement. Persist executable paths and machine settings rather than relying on shell exports.
 - [ ] Complete health reporting: last observed input, queue age, worker/model/parser failures, skipped vs missing work, and source coverage.
-- [ ] Update README/architecture and run unit, race, integration, cross-process crash, scratch-HOME installer, and supported-platform build checks.
+- [ ] Replace obsolete README/architecture instructions, tests, helpers, and compatibility branches rather than layering over them. Run unit, race, integration, cross-process crash, scratch-HOME installer, and supported-platform build checks against the new contract.
 
 **Likely paths:** `install.sh`, `docs/launchd/`, `docs/systemd/`, Windows setup, `cmd/doctor.go`, README/architecture.
 
@@ -299,15 +303,16 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 8. Enable deliberately and tune with real examples
 
-- [ ] Install the verified binary/integrations for approved scopes, switch to shadow with compatible instructions, and inspect a small real sample.
+- [ ] Install the verified binary/integrations for approved scopes into a fresh store, use the single new reporting instruction set, and inspect a small shadow sample. Do not import old history.
 - [ ] Check unsupported claims, duplicates, valuable misses, latency/cost, and report/hook overlap. Grow toward 30–50 labeled examples; do not require a calendar delay just to satisfy a rollout ritual.
 - [ ] Switch to live explicitly. Keep old shadow results unapplied by default; any bounded replay into live mode revalidates current human edits, dedup state, and policy.
-- [ ] Document rollback: stop workers, return to compatible legacy instructions/mode, retain queued evidence for inspection; never auto-flush it or uninstall the working journal.
+- [ ] Document the pause/recovery procedure: stop workers or return to shadow, retain queued evidence, fix the problem, and resume. No old binary/schema rollback, direct-agent mode, automatic flush, or destructive reset.
 
 **Done when:** the human finds the output worth reading, deliberate skips are explainable, and forced replay does not multiply entries or resurrect dismissed outcomes. No numerical quality claim is established by this plan alone.
 
 ## 8. What stays out of this pass
 
+- Backward compatibility: old-schema readers, command/config aliases, legacy routing, mixed-version writers, migrations, and old-history import. Existing data is not deleted; it is simply outside the new active store.
 - A new web app, vector database, agent memory injection, autonomous evidence investigation, or hosted service.
 - Multi-machine synchronization or distributed exactly-once promises.
 - Automatic task creation from failures, PR/CI narration, or mandatory candidate triage.

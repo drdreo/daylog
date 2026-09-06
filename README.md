@@ -245,8 +245,10 @@ doesn't answer.
 [Gatekeeper architecture and implementation plan](docs/gatekeeper-plan.md)
 is the selected next direction: agents report into a durable queue, a one-shot
 pi/Luna editor selects and combines outcomes, and the Go CLI publishes them
-safely. The plan includes an ordered implementation checklist and explicit
-shadow/live cutover. It is not implemented or enabled yet.
+safely. This is a clean-break implementation: no legacy mode, old-schema
+support, or migration framework. Producers and widgets move together to the
+new contract. The plan includes an ordered implementation checklist and explicit
+shadow/live activation. It is not implemented or enabled yet.
 
 [Automatic logging research](docs/automatic-logging-research.md) contains the
 code audit, comparable projects, harness findings, and supporting sources.
