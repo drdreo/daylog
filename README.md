@@ -240,6 +240,17 @@ already applied, so consumers stay dumb:
 Raw events remain available in the `.jsonl` files for anything the fold
 doesn't answer.
 
+## Next implementation: the daylog gatekeeper
+
+[Gatekeeper architecture and implementation plan](docs/gatekeeper-plan.md)
+is the selected next direction: agents report into a durable queue, a one-shot
+pi/Luna editor selects and combines outcomes, and the Go CLI publishes them
+safely. The plan includes an ordered implementation checklist and explicit
+shadow/live cutover. It is not implemented or enabled yet.
+
+[Automatic logging research](docs/automatic-logging-research.md) contains the
+code audit, comparable projects, harness findings, and supporting sources.
+
 ## Development
 
 ```sh

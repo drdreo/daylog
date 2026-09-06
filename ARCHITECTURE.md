@@ -5,6 +5,14 @@
 
 ---
 
+> **Next implementation:** [Gatekeeper architecture and plan](docs/gatekeeper-plan.md).
+> The selected direction is report-first capture with a separate pi/Luna editor,
+> not stricter reporting instructions or reminder hooks. That plan supersedes
+> the future producer/editor direction in §§5.1, 6, and 7.3 below; these sections
+> retain the original design for context. The gatekeeper is not implemented yet.
+> See the [research audit](docs/automatic-logging-research.md) for limitations of
+> the current implementation, including concurrency and correction semantics.
+
 ## 1. Goals and non-goals
 
 Daylog keeps the human in the loop by collecting a short, structured trail of what every agent (and the human) did, enriching it with live status from external systems, and rendering it as one daily view. It must remain useful when everything else fails: no network, no daemon, no UI — the raw files must still tell the story of the day.
