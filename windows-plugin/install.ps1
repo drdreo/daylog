@@ -9,9 +9,14 @@
 
 param(
     [switch]$PollTask,
-    [switch]$NoStartup
+    [switch]$NoStartup,
+    [string]$DataDir = $env:DAYLOG_DIR
 )
 $ErrorActionPreference = 'Stop'
+if (-not $DataDir) { $DataDir = [Environment]::GetEnvironmentVariable('DAYLOG_DIR', 'User') }
+if (-not $DataDir) { throw 'Set DAYLOG_DIR to an explicitly initialized fresh v2 store before installing the widget.' }
+$env:DAYLOG_DIR = $DataDir
+[Environment]::SetEnvironmentVariable('DAYLOG_DIR', $DataDir, 'User')
 
 $dest = Join-Path $env:LOCALAPPDATA 'daylog'
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -19,7 +24,7 @@ Copy-Item (Join-Path $PSScriptRoot 'daylog-tray.ps1') $dest -Force
 Write-Host "Installed $dest\daylog-tray.ps1"
 
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$argsLine = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\daylog-tray.ps1`""
+$argsLine = "-NoProfile -WindowStyle Hidden -File `"$dest\daylog-tray.ps1`""
 
 if (-not $NoStartup) {
     $shell = New-Object -ComObject WScript.Shell
@@ -46,8 +51,9 @@ if ($PollTask) {
     if (-not $daylog) {
         Write-Warning 'daylog.exe not found - skipping the poll task. Install it, then re-run with -PollTask.'
     } else {
-        schtasks /Create /F /TN 'daylog poll gh' /SC MINUTE /MO 10 /TR "`"$daylog`" poll gh" | Out-Null
-        Write-Host "Scheduled task 'daylog poll gh' (every 10 minutes)"
+        schtasks /Create /TN 'DaylogGitHubV2' /SC MINUTE /MO 10 /TR "`"$daylog`" --data-dir `"$DataDir`" poll gh" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Task registration failed; existing tasks are not overwritten.' }
+        Write-Host "Scheduled task 'DaylogGitHubV2' (every 10 minutes)"
     }
 }
 

@@ -1,49 +1,29 @@
-# Canonical agent instruction block
+# Canonical agent reporting instructions
 
-Paste the block below verbatim into each agent's global config —
-`~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex,
-pi's equivalent.
+The canonical skill is [`skills/daylog/SKILL.md`](../skills/daylog/SKILL.md).
+Install that same instruction set for every harness. No mode-dependent prompts or separate publishers.
 
-Agent identity is deliberately **not** in the prompt: each harness's launch
-wrapper sets `DAYLOG_SOURCE=agent:<name>` once (e.g. in a shell alias or
-wrapper script), so `source` is correct by construction rather than by
-agent self-report.
-
-For skill-aware Codex and Claude Code installations, the same workflow is
-packaged in [`../skills/daylog/SKILL.md`](../skills/daylog/SKILL.md). Run
-`./install.sh --skills` to install it in both global skill directories.
-
----
+For harnesses without skill discovery, use this block:
 
 ```markdown
-## Work logging (daylog)
+## Work reporting (daylog)
 
-When a task leaves something behind — code, documentation, or product
-behavior materially changed; a bug diagnosed or fixed; research or a review
-reached a conclusion; infrastructure, schema, or data changed — run:
+Report facts, findings, decisions, changes, and incomplete results with:
 
-    daylog add --type <work|sidequest> "one-line TLDR, ≤280 chars"
+    daylog add --type <work|sidequest|note> --ref '#142' "factual report"
 
-If you notice something actionable that you are NOT doing, file it for
-the human to review:
+Distinguish proposed, attempted, implemented, tested, and deployed work honestly.
+Do not apply a journal materiality rubric or write publication-ready copy: Athena,
+daylog's gatekeeping subsystem, handles relevance, wording, grouping, duplicates, and holds. Unnecessary
+reports are acceptable private inputs; do not narrate every tool call. Reports are
+bounded at 16 KiB. Include useful refs; PR/CI current state stays in its separate
+snapshot. Never claim verification you did not perform.
 
-    daylog add --type todo "concrete action, for human review"
+The harness sets DAYLOG_SOURCE=agent:<name>. Never impersonate a human or write
+data files. `queued <candidate-id>` confirms capture, not publication. Persistence
+failure is an error. Supply --idempotency-key only when you have a stable request
+identity, and reuse it only for identical content.
 
-- Add `--ref '#142'` (or a Linear/Jira id) for any PR or issue involved.
-- `work` = the task you were asked to do; `sidequest` = anything you did
-  that wasn't the original ask. When unsure, use `sidequest`.
-- Do NOT log: questions answered, code explained or read, trivial edits,
-  progress updates, routine failures or retries, or work whose only artifact
-  is the conversation. When it is borderline, do not log — a log full of
-  noise stops being read.
-- Do NOT log PR lifecycle, review state, links, or CI/check results. The
-  GitHub poller already owns those. A PR or issue may be a `--ref`, but the
-  entry must describe the underlying work or conclusion, not its PR status.
-- A failure or blocker is not itself an outcome. Log only a durable diagnosis
-  or decision produced by investigating it, and name that result rather than
-  the failed PR, check, command, or attempt.
-- Todos go to the human's review queue. Do not act on them, track them,
-  or file them for yourself — filing one ends your involvement with it.
-  Triage (`accept`/`decline`) is the human's alone.
-- One entry per completed task. Never write to daylog's data files directly.
+An explicit todo is a deliberate proposal for the human, not a work report or your
+own task tracker. Do not adopt, decline, or complete obligations for the human.
 ```

@@ -104,7 +104,7 @@ func TestRunGHFirstRunWritesSnapshotOnly(t *testing.T) {
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not written: %v", err)
 	}
-	got, ok := snap.PRs["gh:pr:a/b#1"]
+	got, ok := snap.PRs["gh:pr:github.com/a/b#1"]
 	if !ok {
 		t.Fatalf("snapshot missing PR, has %v", snap.PRs)
 	}
@@ -118,7 +118,7 @@ func TestRunGHFirstRunWritesSnapshotOnly(t *testing.T) {
 
 func TestRunGHWorkflowChangesStaySnapshotOnly(t *testing.T) {
 	tempDataDir(t)
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:github.com/a/b#1", Repo: "a/b", Number: 1,
 		Title: "Fix races", State: "open", Checks: "passing", Review: "approved"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestRunGHWorkflowChangesStaySnapshotOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap, _ := snapshot.LoadGHPRs()
-	got := snap.PRs["gh:pr:a/b#1"]
+	got := snap.PRs["gh:pr:github.com/a/b#1"]
 	if got.Checks != "failing" || got.Review != "changes_requested" {
 		t.Fatalf("snapshot did not refresh workflow state: %+v", got)
 	}
@@ -143,7 +143,7 @@ func TestRunGHWorkflowChangesStaySnapshotOnly(t *testing.T) {
 
 func TestRunGHDropsMergedPRWithoutNarratingIt(t *testing.T) {
 	tempDataDir(t)
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:github.com/a/b#1", Repo: "a/b", Number: 1,
 		Title: "Fix races", State: "open", Checks: "passing", Review: "approved"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestRunGHDropsMergedPRWithoutNarratingIt(t *testing.T) {
 
 func TestRunGHFetchFailureKeepsSnapshotAndExitsZero(t *testing.T) {
 	tempDataDir(t)
-	prev := snapWith(pr("gh:pr:a/b#1", "open", "passing", "none"))
+	prev := snapWith(pr("gh:pr:github.com/a/b#1", "open", "passing", "none"))
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRunGHFetchFailureKeepsSnapshotAndExitsZero(t *testing.T) {
 
 func TestRunGHPartialFetchFailureSkipsEverything(t *testing.T) {
 	tempDataDir(t)
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:github.com/a/b#1", Repo: "a/b", Number: 1,
 		Title: "Fix races", State: "open", Checks: "passing"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestRunGHPartialFetchFailureSkipsEverything(t *testing.T) {
 
 func TestRunGHDryRunWritesNothing(t *testing.T) {
 	dir := tempDataDir(t)
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:a/b#1", Repo: "a/b", Number: 1,
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:github.com/a/b#1", Repo: "a/b", Number: 1,
 		Title: "Fix races", State: "open", Checks: "passing"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 	tempDataDir(t)
 	stubGH(t, map[string]string{
 		"search prs":           `[{"number":7,"repository":{"nameWithOwner":"o/r"}}]`,
-		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"u","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x"}`,
+		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"https://github.com/o/r/pull/7","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x"}`,
 	}, nil)
 	now, _ := time.Parse(time.RFC3339, "2026-08-23T12:00:00Z")
 	cur, _, err := fetchGHPRs(now, ownerFilter{})
@@ -250,8 +250,8 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 	if cur.FetchedAt != "2026-08-23T12:00:00Z" {
 		t.Errorf("fetched_at = %q", cur.FetchedAt)
 	}
-	got := cur.PRs["gh:pr:o/r#7"]
-	want := snapshot.PR{Ref: "gh:pr:o/r#7", Repo: "o/r", Number: 7, Title: "T", URL: "u",
+	got := cur.PRs["gh:pr:github.com/o/r#7"]
+	want := snapshot.PR{Ref: "gh:pr:github.com/o/r#7", Repo: "o/r", Number: 7, Title: "T", URL: "https://github.com/o/r/pull/7",
 		State: "open", Draft: true, Checks: "pending", Review: "none", UpdatedAt: "x"}
 	if got != want {
 		t.Errorf("PR = %+v, want %+v", got, want)
@@ -337,7 +337,7 @@ func TestFetchNarrowsSearchAndDropsOutOfScopePRs(t *testing.T) {
 	if !strings.Contains(searched, "--owner=work") {
 		t.Errorf("search args = %q, want a server-side --owner narrowing", searched)
 	}
-	if len(cur.PRs) != 1 || cur.PRs["gh:pr:work/app#1"].State != "open" {
+	if len(cur.PRs) != 1 || cur.PRs["gh:pr:github.com/work/app#1"].State != "open" {
 		t.Fatalf("snapshot = %+v, want only the in-scope PR", cur.PRs)
 	}
 }
@@ -358,7 +358,7 @@ func TestFetchResolvesSelfToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cur.PRs["gh:pr:drdreo/daylog#1"]; !ok {
+	if _, ok := cur.PRs["gh:pr:github.com/drdreo/daylog#1"]; !ok {
 		t.Fatalf("snapshot = %+v, want the authenticated user's PR", cur.PRs)
 	}
 }
@@ -376,7 +376,7 @@ func TestRunGHRejectsMalformedFilterBeforeTouchingDisk(t *testing.T) {
 
 func TestRunGHOutOfScopePRDropsWithoutNarrativeEvent(t *testing.T) {
 	tempDataDir(t)
-	prev := snapWith(snapshot.PR{Ref: "gh:pr:otherco/app#1", Repo: "otherco/app",
+	prev := snapWith(snapshot.PR{Ref: "gh:pr:github.com/otherco/app#1", Repo: "otherco/app",
 		Number: 1, Title: "Fix races", State: "open", Checks: "passing"})
 	if err := snapshot.SaveGHPRs(prev); err != nil {
 		t.Fatal(err)

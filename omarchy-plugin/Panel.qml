@@ -62,7 +62,16 @@ Panel {
     var row = selectedRow()
     if (!row || !row.data) return ""
     if (row.kind === "pr") return String(row.data.url || "")
-    return row.data.pr ? String(row.data.pr.url || "") : ""
+    return entryURL(row.data)
+  }
+
+  function entryURL(e) {
+    var refs = e && e.refs ? e.refs : []
+    for (var i = 0; i < refs.length; i++) {
+      var m = /^gh:pr:([a-zA-Z0-9.-]+)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$/.exec(String(refs[i]))
+      if (m) return "https://" + m[1] + "/" + m[2] + "/pull/" + m[3]
+    }
+    return ""
   }
 
   function openUrl(url) {
@@ -88,7 +97,7 @@ Panel {
     var row = selectedRow()
     if (!row || row.kind !== "entry" || !row.data) return
     var e = row.data
-    if (String(e.type) !== "todo" || e.done === true) return
+    if (String(e.type) !== "todo" || e.done === true || store.needsTriageId(String(e.id))) return
     store.markDone(String(e.id))
   }
 
@@ -132,29 +141,20 @@ Panel {
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
   function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
-  function clockOf(ts) {
-    var t = new Date(String(ts || ""))
-    return isNaN(t.getTime()) ? "" : Qt.formatTime(t, "HH:mm")
-  }
-
   // A closed todo takes its place in the log when it was closed, so that is
   // the clock its row leads with — the filing time is the other half of the
   // story, not the headline.
   function logClockOf(e) {
     if (!e) return ""
-    return clockOf(String(e.type) === "todo" && e.done_ts ? e.done_ts : e.ts)
+    return String(e.display_at).slice(11, 16)
   }
 
   // When a closed todo was originally taken on. Carries the date once the
   // todo outlived its filing day, so "filed 09:12" cannot read as this morning.
   function filedOf(e) {
-    if (!e || String(e.type) !== "todo" || !e.done_ts) return ""
-    var filed = new Date(String(e.ts))
-    if (isNaN(filed.getTime())) return ""
-    var closed = new Date(String(e.done_ts))
-    if (!isNaN(closed.getTime()) && filed.toDateString() !== closed.toDateString())
-      return Qt.formatDateTime(filed, "MMM d HH:mm")
-    return Qt.formatTime(filed, "HH:mm")
+    if (!e || String(e.type) !== "todo" || !e.done) return ""
+    var filed = String(e.filed_at)
+    return (filed.slice(0, 10) !== String(e.display_at).slice(0, 10) ? filed.slice(0, 10) + " " : "") + filed.slice(11, 16)
   }
 
   // agent:claude → claude, human:cli → cli, poller:gh → gh
@@ -176,7 +176,6 @@ Panel {
   function entryTooltip(e) {
     if (!e) return ""
     var parts = [logClockOf(e) + " · " + String(e.source) + " · " + String(e.type)]
-    if (e.original_type) parts.push("was " + e.original_type)
     var filed = filedOf(e)
     if (filed) parts.push("filed " + filed)
     if (e.refs && e.refs.length > 0) parts.push(e.refs.join(", "))
@@ -531,10 +530,8 @@ Panel {
     property bool accent: false
     property int rowIndex: -1
 
-    readonly property var pr: entry && entry.pr ? entry.pr : null
-    readonly property bool prAlarming: pr !== null && String(pr.checks) === "failing"
     readonly property bool selected: root.cursorActive && root.cursorIndex === rowIndex
-    readonly property string url: pr ? String(pr.url || "") : ""
+    readonly property string url: root.entryURL(entry)
 
     onSelectedChanged: if (selected) root.ensureVisible(entryRow)
 
@@ -564,7 +561,6 @@ Panel {
       text: {
         if (!entryRow.entry) return ""
         var text = String(entryRow.entry.tldr)
-        if (entryRow.pr) text += "  [" + store.prStatusLabel(entryRow.pr) + "]"
         // Both moments on the row itself: the leading clock is when the todo
         // was finished, so the line still has to say when it was taken on —
         // a todo carried for three days should say so without a hover.
@@ -588,7 +584,7 @@ Panel {
     Text {
       id: entrySource
       text: entryRow.entry ? root.shortSource(entryRow.entry.source) : ""
-      color: entryRow.prAlarming ? root.urgent : root.dim
+      color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       anchors.right: parent.right

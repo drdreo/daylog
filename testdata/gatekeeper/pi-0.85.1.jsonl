@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"pi-session","timestamp":"2026-09-06T10:00:00Z","cwd":"/approved"}
+{"type":"message","id":"user1","parentId":null,"timestamp":"2026-09-06T10:00:01Z","message":{"role":"user","content":"Fix the refresh race"}}
+{"type":"message","id":"tool1","parentId":"user1","timestamp":"2026-09-06T10:00:02Z","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"PRIVATE REASONING"},{"type":"toolCall","name":"bash","arguments":{"command":"echo SECRET"}}]}}
+{"type":"message","id":"final1","parentId":"tool1","timestamp":"2026-09-06T10:00:03Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Fixed refresh locking; deployment not attempted."}]}}
+{"type":"message","id":"branchuser","parentId":"user1","timestamp":"2026-09-06T10:00:04Z","message":{"role":"user","content":"Explore a different fix"}}
+{"type":"message","id":"branchfinal","parentId":"branchuser","timestamp":"2026-09-06T10:00:05Z","message":{"role":"assistant","stopReason":"aborted","content":[{"type":"text","text":"Investigated an alternative; implementation incomplete."}]}}

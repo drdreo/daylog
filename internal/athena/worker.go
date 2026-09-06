@@ -1,0 +1,502 @@
+package athena
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"github.com/drdreo/daylog/internal/capture"
+	"github.com/drdreo/daylog/internal/config"
+	original "github.com/drdreo/daylog/internal/context"
+	"github.com/drdreo/daylog/internal/durable"
+	"github.com/drdreo/daylog/internal/event"
+	"github.com/drdreo/daylog/internal/store"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+type Worker struct {
+	Queue       *capture.Spool
+	Config      config.Config
+	Runner      Runner
+	Now         func() time.Time
+	AfterAppend func() error
+}
+type Result struct {
+	Mode    string `json:"mode"`
+	Calls   int    `json:"calls"`
+	Plans   int    `json:"plans"`
+	Events  int    `json:"events"`
+	Waiting int    `json:"waiting"`
+}
+type Budget struct {
+	Version int    `json:"version"`
+	Date    string `json:"date"`
+	Calls   int    `json:"calls"`
+}
+
+func (w *Worker) now() time.Time {
+	if w.Now != nil {
+		return w.Now()
+	}
+	return time.Now()
+}
+func (w *Worker) planPath(id string) string { return filepath.Join(w.Queue.Root, "plans", id+".json") }
+func (w *Worker) Once(ctx context.Context, shadow bool) (Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(w.Config.Runner.TimeoutSeconds)*time.Second)
+	defer cancel()
+	mode := w.Config.Mode
+	if shadow {
+		mode = "shadow"
+	}
+	res := Result{Mode: mode}
+	unlock, err := durable.Lock(filepath.Join(w.Queue.Root, "worker.lock"), false)
+	if err != nil {
+		return res, err
+	}
+	defer unlock()
+	// Saved plans are replayed before new model invocations. Shadow never applies even a
+	// previously live, partially-applied plan; switching back to live resumes it.
+	paths, _ := filepath.Glob(filepath.Join(w.Queue.Root, "plans", "*.json"))
+	for _, p := range paths {
+		var plan Plan
+		if err := durable.Read(p, &plan); err != nil {
+			return res, err
+		}
+		if plan.Version != Version {
+			return res, fmt.Errorf("unsupported saved plan")
+		}
+		if plan.Status == "ready" && plan.Mode == "shadow" {
+			plan.Status = "shadow"
+			if err := durable.JSON(p, plan); err != nil {
+				return res, err
+			}
+		}
+		if plan.Status == "applied" || plan.Status == "shadow" || plan.Status == "stale" {
+			if err := w.ack(plan); err != nil {
+				return res, err
+			}
+		}
+		if plan.Status == "ready" && plan.Mode == "live" && mode == "live" {
+			n, e := w.apply(&plan)
+			res.Events += n
+			if e != nil {
+				return res, e
+			}
+		}
+	}
+	items, err := w.Queue.List("")
+	if err != nil {
+		return res, err
+	}
+	for i := range items {
+		r := &items[i].Receipt
+		if r.Status == "processing" {
+			if r.PlanID != "" {
+				var p Plan
+				if err := durable.Read(w.planPath(r.PlanID), &p); err == nil {
+					if p.Status == "ready" {
+						continue
+					}
+					if err := w.ack(p); err != nil {
+						return res, err
+					}
+					continue
+				} else if !os.IsNotExist(err) {
+					return res, err
+				}
+			}
+			r.Status = "pending"
+			r.Reason = "reclaimed interrupted worker"
+			if err := w.Queue.SaveReceipt(*r); err != nil {
+				return res, err
+			}
+		}
+	}
+	items, err = w.Queue.List("")
+	if err != nil {
+		return res, err
+	}
+	groups := map[string][]capture.Item{}
+	order := []string{}
+	now := w.now()
+	for _, it := range items {
+		r := it.Receipt
+		eligible := r.Status == "pending"
+		if r.Status == "error" && r.PlanID == "" && r.Attempts < w.Config.Runner.MaxAttempts {
+			at, _ := time.Parse(time.RFC3339Nano, r.NextAttemptAt)
+			eligible = !now.Before(at)
+		}
+		if !eligible {
+			continue
+		}
+		k := it.Candidate.Episode
+		if len(groups[k]) == 0 {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], it)
+	}
+	var runErr error
+	attempts := 0
+	for _, episode := range order {
+		if err := ctx.Err(); err != nil {
+			return res, errors.Join(runErr, err)
+		}
+		if attempts >= w.Config.Runner.CallsPerRun {
+			break
+		}
+		group := groups[episode]
+		first, _ := time.Parse(time.RFC3339Nano, group[0].Candidate.CapturedAt)
+		last, _ := time.Parse(time.RFC3339Nano, group[len(group)-1].Candidate.CapturedAt)
+		if now.Sub(last) < time.Duration(w.Config.QuietSeconds)*time.Second && now.Sub(first) < time.Duration(w.Config.MaxWaitSeconds)*time.Second {
+			res.Waiting += len(group)
+			continue
+		}
+		attempts++
+		if len(group) > w.Config.BatchSize {
+			group = group[:w.Config.BatchSize]
+		}
+		// Only exact episode arrivals reopen held/skipped evidence; unrelated arrivals do not.
+		for _, old := range items {
+			if len(group) >= w.Config.BatchSize {
+				break
+			}
+			if old.Candidate.Episode == episode && old.Receipt.Status == "processed" && (old.Receipt.Disposition == "hold" || old.Receipt.Disposition == "skip") {
+				group = append(group, old)
+			}
+		}
+		in, err := w.input(group)
+		if err != nil {
+			if e := w.fail(group, err); e != nil {
+				return res, e
+			}
+			runErr = errors.Join(runErr, err)
+			continue
+		}
+		budgetPath := filepath.Join(w.Queue.Root, "budget.json")
+		budget := Budget{Version: Version, Date: now.Format("2006-01-02")}
+		if err := durable.Read(budgetPath, &budget); err != nil && !os.IsNotExist(err) {
+			return res, err
+		}
+		if budget.Version != Version {
+			return res, fmt.Errorf("unsupported call budget")
+		}
+		if budget.Date != now.Format("2006-01-02") {
+			budget.Date = now.Format("2006-01-02")
+			budget.Calls = 0
+		}
+		if budget.Calls >= w.Config.Runner.CallsPerDay {
+			return res, fmt.Errorf("daily model call limit reached; intake continues")
+		}
+		claimID := event.NewID(now)
+		for i := range group {
+			r := &group[i].Receipt
+			r.Status = "processing"
+			r.Attempts++
+			r.PlanID = claimID
+			r.UpdatedAt = now.Format(time.RFC3339Nano)
+			if err := w.Queue.SaveReceipt(*r); err != nil {
+				return res, err
+			}
+		}
+		budget.Calls++
+		if err := durable.JSON(budgetPath, budget); err != nil {
+			return res, err
+		}
+		res.Calls++
+		out, err := w.Runner.Run(ctx, in)
+		if err == nil {
+			err = Validate(in, out)
+		}
+		if err != nil {
+			if e := w.fail(group, err); e != nil {
+				return res, e
+			}
+			runErr = errors.Join(runErr, err)
+			continue
+		}
+		plan := w.makePlan(mode, in, out, claimID)
+		for _, op := range plan.Operations {
+			if op.Event != nil {
+				if err := op.Event.Validate(); err != nil {
+					return res, err
+				}
+				current := map[string]event.Entry{}
+				for _, e := range in.Outcomes {
+					current[e.ID] = e
+				}
+				if err := event.CheckTargets(*op.Event, current); err != nil {
+					return res, err
+				}
+			}
+		}
+		// No event can be appended until the entire validated plan is durable.
+		if err := durable.JSON(w.planPath(plan.ID), plan); err != nil {
+			return res, err
+		}
+		for _, it := range group {
+			r := it.Receipt
+			r.PlanID = plan.ID
+			r.InputHash = plan.InputHash
+			r.Model = plan.Model
+			r.Policy = PolicyVersion
+			r.Evidence = it.Candidate.Evidence
+			if err := w.Queue.SaveReceipt(r); err != nil {
+				return res, err
+			}
+		}
+		res.Plans++
+		if mode == "live" {
+			n, err := w.apply(&plan)
+			res.Events += n
+			if err != nil {
+				return res, err
+			}
+		} else {
+			plan.Status = "shadow"
+			if err := durable.JSON(w.planPath(plan.ID), plan); err != nil {
+				return res, err
+			}
+			if err := w.ack(plan); err != nil {
+				return res, err
+			}
+		}
+	}
+	return res, runErr
+}
+func (w *Worker) input(group []capture.Item) (Input, error) {
+	in := Input{Version: Version, Policy: PolicyVersion, Candidates: []capture.Candidate{}, Evidence: []capture.Evidence{}, Outcomes: []event.Entry{}, Preferences: []Preference{}}
+	evidence := map[string]bool{}
+	root, _ := store.DataDir()
+	for _, it := range group {
+		c := it.Candidate
+		approved := false
+		for _, p := range w.Config.CloudProjects {
+			if original.Within(c.Context.Cwd, p) {
+				approved = true
+			}
+		}
+		if !approved || original.Within(c.Context.Cwd, root) {
+			return in, fmt.Errorf("cloud evidence submission not approved for captured project %q", c.Context.Cwd)
+		}
+		c.Text = capture.Redact(c.Text, capture.MaxReportBytes)
+		in.Candidates = append(in.Candidates, c)
+		for _, id := range c.Evidence {
+			if evidence[id] {
+				continue
+			}
+			e, err := w.Queue.GetEvidence(id)
+			if err != nil {
+				return in, err
+			}
+			in.Evidence = append(in.Evidence, e)
+			evidence[id] = true
+		}
+	}
+	all, err := store.ReadAll()
+	if err != nil {
+		return in, err
+	}
+	effective := event.Effective(all)
+	for _, e := range effective {
+		c := group[0].Candidate
+		if !event.SameProject(e.Context, c.Context) {
+			continue
+		}
+		linked := e.Provenance != nil && e.Provenance.Episode == c.Episode
+		occurrence, _ := time.Parse(time.RFC3339Nano, c.OccurredAt)
+		existing, _ := time.Parse(time.RFC3339Nano, e.DisplayAt)
+		delta := occurrence.Sub(existing)
+		hint := delta >= -24*time.Hour && delta <= 7*24*time.Hour
+		for _, r := range c.Refs {
+			for _, er := range e.Refs {
+				if r == er {
+					hint = true
+				}
+			}
+		}
+		if linked || hint {
+			e.TLDR = capture.Redact(e.TLDR, event.MaxTLDRChars*4)
+			e.DoneNote = capture.Redact(e.DoneNote, 4096)
+			e.Reason = capture.Redact(e.Reason, 1024)
+			in.Outcomes = append(in.Outcomes, e)
+		}
+	}
+	sort.Slice(in.Outcomes, func(i, j int) bool { return in.Outcomes[i].ID < in.Outcomes[j].ID })
+	if len(in.Outcomes) > 64 {
+		return in, fmt.Errorf("related outcome context exceeds cap; narrow task linkage")
+	}
+	var prefs struct {
+		Version  int          `json:"version"`
+		Examples []Preference `json:"examples"`
+	}
+	if err := durable.Read(filepath.Join(w.Queue.Root, "preferences.json"), &prefs); err == nil {
+		if prefs.Version != Version {
+			return in, fmt.Errorf("unsupported preference version")
+		}
+		for _, p := range prefs.Examples {
+			if e, ok := effective[p.Entry]; ok && event.SameProject(e.Context, group[0].Candidate.Context) {
+				p.Reason = capture.Redact(p.Reason, 1024)
+				in.Preferences = append(in.Preferences, p)
+			}
+		}
+		if len(in.Preferences) > 8 {
+			in.Preferences = in.Preferences[len(in.Preferences)-8:]
+		}
+	} else if !os.IsNotExist(err) {
+		return in, err
+	}
+	return in, nil
+}
+func (w *Worker) makePlan(mode string, in Input, out Output, id string) Plan {
+	now := w.now()
+	p := Plan{Version: Version, ID: id, Mode: mode, CreatedAt: now.Format(time.RFC3339Nano), InputHash: capture.JSONHash(in), Input: in, Model: w.Config.Runner.Provider + "/" + w.Config.Runner.Model, Applied: map[string]string{}, Status: "ready", Operations: []Operation{}}
+	byID := map[string]capture.Candidate{}
+	for _, c := range in.Candidates {
+		byID[c.ID] = c
+	}
+	for i, a := range out.Actions {
+		op := Operation{ID: fmt.Sprintf("%s-%03d", id, i), Action: a}
+		if a.Kind == "publish" || a.Kind == "amend" || a.Kind == "merge" {
+			primary := byID[a.Candidates[0]]
+			sources := []string{}
+			seen := map[string]bool{}
+			for _, cid := range a.Candidates {
+				c := byID[cid]
+				if !seen[c.Source] {
+					sources = append(sources, c.Source)
+					seen[c.Source] = true
+				}
+			}
+			typ := a.Type
+			if a.Kind != "publish" {
+				typ = a.Kind
+			}
+			e := event.Event{Version: event.Version, ID: event.NewID(now), PublicationKey: "plan/" + op.ID, RecordedAt: now.Format(time.RFC3339Nano), OccurredAt: primary.OccurredAt, TimeBasis: primary.TimeBasis, Source: primary.Source, Type: typ, TLDR: a.Text, Refs: a.Refs, Context: primary.Context, Targets: a.Targets, Reason: a.Reason, Provenance: &event.Provenance{Candidates: a.Candidates, Evidence: a.Evidence, Sources: sources, Model: p.Model, Policy: PolicyVersion, Episode: primary.Episode}}
+			e.Host, _ = os.Hostname()
+			if a.Kind != "publish" {
+				e.ToType = a.Type
+			}
+			op.Event = &e
+		}
+		p.Operations = append(p.Operations, op)
+	}
+	return p
+}
+func (w *Worker) apply(p *Plan) (int, error) {
+	if p.Mode != "live" || p.Status != "ready" {
+		return 0, fmt.Errorf("plan is not eligible for live application")
+	}
+	if capture.JSONHash(p.Input) != p.InputHash || p.Input.Policy != PolicyVersion {
+		return 0, fmt.Errorf("saved plan input/policy mismatch")
+	}
+	out := Output{Version: Version}
+	for _, op := range p.Operations {
+		out.Actions = append(out.Actions, op.Action)
+	}
+	if err := Validate(p.Input, out); err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, op := range p.Operations {
+		if op.Event == nil || p.Applied[op.ID] != "" {
+			continue
+		}
+		id, err := store.AppendOnce(*op.Event)
+		if err != nil {
+			p.Status = "stale"
+			p.Error = err.Error()
+			if e := durable.JSON(w.planPath(p.ID), p); e != nil {
+				return count, e
+			}
+			if e := w.ack(*p); e != nil {
+				return count, e
+			}
+			return count, err
+		}
+		count++
+		if w.AfterAppend != nil {
+			if err := w.AfterAppend(); err != nil {
+				return count, err
+			}
+		}
+		p.Applied[op.ID] = id
+		if err := durable.JSON(w.planPath(p.ID), p); err != nil {
+			return count, err
+		}
+	}
+	p.Status = "applied"
+	if err := durable.JSON(w.planPath(p.ID), p); err != nil {
+		return count, err
+	}
+	return count, w.ack(*p)
+}
+func (w *Worker) ack(p Plan) error {
+	items, err := w.Queue.List("")
+	if err != nil {
+		return err
+	}
+	receipts := map[string]capture.Receipt{}
+	for _, it := range items {
+		receipts[it.Candidate.ID] = it.Receipt
+	}
+	for _, c := range p.Input.Candidates {
+		r := receipts[c.ID]
+		if r.Status != "processing" || r.PlanID != p.ID {
+			continue
+		}
+		r.Version = Version
+		r.CandidateID = c.ID
+		r.Status = "processed"
+		r.PlanID = p.ID
+		r.InputHash = p.InputHash
+		r.Model = p.Model
+		r.Policy = p.Input.Policy
+		r.Evidence = c.Evidence
+		r.AppliedEvents = []string{}
+		r.Disposition = "outcome"
+		reasons := []string{}
+		for _, op := range p.Operations {
+			for _, id := range op.Action.Candidates {
+				if id == c.ID {
+					if op.Action.Kind == "skip" || op.Action.Kind == "hold" {
+						r.Disposition = op.Action.Kind
+					}
+					reasons = append(reasons, op.Action.Reason)
+					if id := p.Applied[op.ID]; id != "" {
+						r.AppliedEvents = append(r.AppliedEvents, id)
+					}
+				}
+			}
+		}
+		r.Reason = strings.Join(reasons, "; ")
+		if p.Status == "stale" {
+			r.Status = "error"
+			r.Reason = p.Error
+		}
+		r.UpdatedAt = w.now().Format(time.RFC3339Nano)
+		if err := w.Queue.SaveReceipt(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (w *Worker) fail(group []capture.Item, cause error) error {
+	for _, it := range group {
+		r := it.Receipt
+		if r.Status != "processing" {
+			r.Attempts++
+		}
+		r.Status = "error"
+		r.PlanID = ""
+		r.Reason = cause.Error()
+		r.UpdatedAt = w.now().Format(time.RFC3339Nano)
+		r.NextAttemptAt = w.now().Add(time.Duration(1<<min(r.Attempts, 8)) * time.Minute).Format(time.RFC3339Nano)
+		if err := w.Queue.SaveReceipt(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}

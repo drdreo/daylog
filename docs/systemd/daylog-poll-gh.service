@@ -3,10 +3,12 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now daylog-poll-gh.timer
 [Unit]
-Description=daylog GitHub poller (snapshot + transitions)
+Description=daylog GitHub poller (separate snapshot only)
 
 [Service]
 Type=oneshot
 # Scope the poll to certain repo owners on this machine (see README):
 #   Environment=DAYLOG_GH_OWNERS=myorg
-ExecStart=%h/.local/bin/daylog poll gh
+# Replace both paths explicitly; never use an unsupported old store.
+UMask=0077
+ExecStart="%h/.local/bin/daylog" --data-dir "%h/daylog-v2" poll gh

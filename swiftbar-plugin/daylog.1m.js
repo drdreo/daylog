@@ -2,22 +2,23 @@
 // Daylog — macOS menu bar widget for SwiftBar (xbar-compatible output).
 //
 // The macOS sibling of the Omarchy bar widget, and deliberately just as thin
-// (ARCHITECTURE.md §9): it shells out to `daylog today --json` and renders the
+// (ARCHITECTURE.md): it shells out to `daylog today --json` and renders the
 // result as menu lines. All state, folding, and PR joining happen in the CLI —
 // this file is a dumb consumer, replaceable in an afternoon. It is plain JXA
 // (JavaScript for Automation), so it needs nothing beyond what macOS ships.
 //
 // <xbar.title>Daylog</xbar.title>
-// <xbar.version>v1.0</xbar.version>
+// <xbar.version>v2.0</xbar.version>
 // <xbar.author>drdreo</xbar.author>
 // <xbar.author.github>drdreo</xbar.author.github>
 // <xbar.desc>Today's daylog: entries, open todos with agent proposals to triage, and open PRs with live checks/review state. Walk back through earlier days with the ◀/▶ rows.</xbar.desc>
 // <xbar.dependencies>daylog</xbar.dependencies>
 // <xbar.abouturl>https://github.com/drdreo/daylog</xbar.abouturl>
 // <xbar.var>string(DAYLOG_PATH=""): Absolute path to the daylog CLI (empty = search PATH).</xbar.var>
+// <xbar.var>string(DAYLOG_DIR=""): Absolute path to the fresh v2 store (empty = platform default).</xbar.var>
 // <xbar.var>string(DAYLOG_ICON="note.text"): SF Symbol for the menu bar icon (SwiftBar only).</xbar.var>
 //
-// <swiftbar.environment>[DAYLOG_PATH=, DAYLOG_ICON=]</swiftbar.environment>
+// <swiftbar.environment>[DAYLOG_PATH=, DAYLOG_DIR=, DAYLOG_ICON=]</swiftbar.environment>
 // <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 // <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 
@@ -84,19 +85,15 @@ function line(text, params) {
 
 // The action params for "run daylog <args> and re-render": param1..N carry
 // the arguments, so nothing is ever interpolated into a shell string.
-function daylogAction(bin, args, extra) {
-  var params = { bash: bin, terminal: 'false', refresh: 'true' }
+function daylogAction(ctx, args, extra) {
+  if (ctx.dataDir) args = ['--data-dir', ctx.dataDir].concat(args)
+  var params = { bash: ctx.bin, terminal: 'false', refresh: 'true' }
   for (var i = 0; i < args.length; i++) params['param' + (i + 1)] = args[i]
   for (var k in extra) params[k] = extra[k]
   return params
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n }
-
-function clockOf(ts) {
-  var t = new Date(String(ts || ''))
-  return isNaN(t.getTime()) ? '' : pad2(t.getHours()) + ':' + pad2(t.getMinutes())
-}
 
 function shortDateTime(ts) {
   var t = new Date(String(ts || ''))
@@ -182,19 +179,15 @@ function emptyDayNote(iso, todayISO) {
 // the clock its row leads with — the filing time is the other half of the
 // story, not the headline.
 function logClockOf(e) {
-  return clockOf(String(e.type) === 'todo' && e.done_ts ? e.done_ts : e.ts)
+  return String(e.display_at).slice(11, 16)
 }
 
 // When a closed todo was originally taken on. Carries the date once the
 // todo outlived its filing day, so "filed 09:12" cannot read as this morning.
 function filedOf(e) {
-  if (String(e.type) !== 'todo' || !e.done_ts) return ''
-  var filed = new Date(String(e.ts))
-  if (isNaN(filed.getTime())) return ''
-  var closed = new Date(String(e.done_ts))
-  if (!isNaN(closed.getTime()) && filed.toDateString() !== closed.toDateString())
-    return shortDateTime(e.ts)
-  return clockOf(e.ts)
+  if (String(e.type) !== 'todo' || !e.done) return ''
+  var filed = String(e.filed_at)
+  return (filed.slice(0, 10) !== String(e.display_at).slice(0, 10) ? filed.slice(0, 10) + ' ' : '') + filed.slice(11, 16)
 }
 
 // agent:claude → claude, human:cli → cli, poller:gh → gh
@@ -218,10 +211,18 @@ function prStatusLabel(pr) {
   return parts.length > 0 ? parts.join(' · ') : 'open'
 }
 
+function entryURL(e) {
+  var refs = e && e.refs ? e.refs : []
+  for (var i = 0; i < refs.length; i++) {
+    var m = /^gh:pr:([a-zA-Z0-9.-]+)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$/.exec(String(refs[i]))
+    if (m) return 'https://' + m[1] + '/' + m[2] + '/pull/' + m[3]
+  }
+  return ''
+}
+
 function entryTooltip(e) {
   if (!e) return ''
   var parts = [logClockOf(e) + ' · ' + String(e.source) + ' · ' + String(e.type)]
-  if (e.original_type) parts.push('was ' + e.original_type)
   var filed = filedOf(e)
   if (filed) parts.push('filed ' + filed)
   if (e.refs && e.refs.length > 0) parts.push(e.refs.join(', '))
@@ -238,7 +239,6 @@ function entryGlyph(e) {
 
 function entryText(e, withTime) {
   var text = entryGlyph(e) + String(e.tldr)
-  if (e.pr) text += '  [' + prStatusLabel(e.pr) + ']'
   // Both moments on the row itself: the leading clock is when the todo was
   // finished, so the line still has to say when it was taken on — a todo
   // carried for three days should say so without a hover.
@@ -258,34 +258,33 @@ function entryText(e, withTime) {
 // click opens the submenu instead — so it names its color rather than
 // sitting there in disabled grey next to its actionable neighbours.
 function todoRow(e, ctx, lines, untriaged) {
-  var pr = e.pr || null
-  var alarming = pr !== null && String(pr.checks) === 'failing'
+  var url = entryURL(e)
   var label = truncate(entryText(e, false), 70)
   if (untriaged) label = '● ' + label
   var tooltip = untriaged ? 'Awaiting triage — ' + entryTooltip(e) : entryTooltip(e)
-  var color = alarming || untriaged ? URGENT : TEXT
-  var hasSubmenu = untriaged || Boolean(pr && pr.url)
+  var color = untriaged ? URGENT : TEXT
+  var hasSubmenu = untriaged || Boolean(url)
 
   if (hasSubmenu) {
     lines.push(line(label, { tooltip: tooltip, color: color }))
   } else {
-    lines.push(line(label, daylogAction(ctx.bin, ['done', String(e.id)], {
+    lines.push(line(label, daylogAction(ctx, ['done', String(e.id), '--source', 'human:widget'], {
       tooltip: tooltip + ' — click to close', color: color,
     })))
   }
   if (untriaged) {
     // A click is the human ruling, so the identity is stated outright rather
     // than inherited from whatever $DAYLOG_SOURCE the widget was launched with.
-    lines.push(line('-- Accept', daylogAction(ctx.bin, ['accept', String(e.id), '--source', 'human:widget'], { sfimage: 'tray.and.arrow.down' })))
-    lines.push(line('-- Decline', daylogAction(ctx.bin, ['decline', String(e.id), '--source', 'human:widget'], { sfimage: 'xmark' })))
+    lines.push(line('-- Accept', daylogAction(ctx, ['accept', String(e.id), '--source', 'human:widget'], { sfimage: 'tray.and.arrow.down' })))
+    lines.push(line('-- Decline', daylogAction(ctx, ['decline', String(e.id), '--source', 'human:widget'], { sfimage: 'xmark' })))
     lines.push(line('-----'))
   }
-  if (hasSubmenu) {
-    lines.push(line('-- Mark done', daylogAction(ctx.bin, ['done', String(e.id)], { sfimage: 'checkmark' })))
+  if (hasSubmenu && !untriaged) {
+    lines.push(line('-- Mark done', daylogAction(ctx, ['done', String(e.id), '--source', 'human:widget'], { sfimage: 'checkmark' })))
   }
-  if (pr && pr.url) {
-    lines.push(line('-- Open ' + pr.repo + '#' + pr.number + ' — ' + prStatusLabel(pr), {
-      href: String(pr.url), sfimage: 'arrow.up.right.square',
+  if (url) {
+    lines.push(line('-- Open referenced PR', {
+      href: url, sfimage: 'arrow.up.right.square',
     }))
   }
 }
@@ -446,13 +445,12 @@ function render(day, ctx) {
     if (entries.length > 0) {
       for (var k = 0; k < entries.length; k++) {
         var e = entries[k]
-        var pr = e.pr || null
-        var alarming = pr !== null && String(pr.checks) === 'failing'
+        var url = entryURL(e)
         var done = e.done === true
         lines.push(line(truncate(entryText(e, true), 78) + '  — ' + shortSource(e.source), {
           tooltip: entryTooltip(e),
-          color: alarming ? URGENT : (done ? DIM : undefined),
-          href: pr && pr.url ? String(pr.url) : undefined,
+          color: done ? DIM : undefined,
+          href: url || undefined,
         }))
       }
     } else {
@@ -482,7 +480,7 @@ function render(day, ctx) {
   lines.push('---')
   lines.push(line('Refresh', { refresh: 'true', sfimage: 'arrow.clockwise' }))
   if (ctx.bin) {
-    lines.push(line('Poll GitHub', daylogAction(ctx.bin, ['poll', 'gh'], { sfimage: 'arrow.triangle.2.circlepath' })))
+    lines.push(line('Poll GitHub', daylogAction(ctx, ['poll', 'gh'], { sfimage: 'arrow.triangle.2.circlepath' })))
   }
   return lines
 }
@@ -589,19 +587,23 @@ function run(argv) {
   }
 
   var ctx = {
-    bin: findDaylog(), icon: envVar('DAYLOG_ICON'), error: '',
+    bin: findDaylog(), dataDir: envVar('DAYLOG_DIR'), icon: envVar('DAYLOG_ICON'), error: '',
     nowMs: nowMs, statePath: statePath, self: selfPath(),
   }
   var day = null
   if (!ctx.bin) {
     ctx.error = 'daylog CLI not found — install it (install.sh) or set DAYLOG_PATH in this plugin’s settings'
+  } else if (/["|\t\r\n]|\s{2,}/.test(ctx.bin + ctx.dataDir)) {
+    ctx.error = 'SwiftBar action paths cannot contain quotes, pipes, tabs or repeated whitespace'
   } else {
     // The date came out of the regex in readViewDay, so it is a bare
     // YYYY-MM-DD and safe to hand to the shell as-is.
     var viewDay = readViewDay(ctx.statePath, ctx.nowMs)
     var args = 'today' + (viewDay === '' ? '' : ' ' + viewDay) + ' --json'
     try {
-      day = JSON.parse(sh(shellQuote(ctx.bin) + ' ' + args))
+      var parsed = JSON.parse(sh(shellQuote(ctx.bin) + (ctx.dataDir ? ' --data-dir ' + shellQuote(ctx.dataDir) : '') + ' ' + args))
+      if (parsed.version !== 2) throw new Error('Unsupported view version; update binary and widget together')
+      day = parsed
     } catch (e) {
       ctx.error = '`daylog ' + args + '` failed: ' + String(e.message || e)
     }

@@ -1,159 +1,268 @@
-// Package store owns the on-disk layout: one JSONL file per day under the
-// platform's user data directory. Append-only; nothing here mutates history.
+// Package store owns fresh-store initialization and serialized replay-safe publication.
 package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/drdreo/daylog/internal/durable"
+	"github.com/drdreo/daylog/internal/event"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/drdreo/daylog/internal/event"
 )
 
-// DataDir resolves the daylog root. Precedence: $DAYLOG_DIR, then the
-// platform's conventional per-user data directory:
-//
-//	linux:   $XDG_DATA_HOME/daylog (default ~/.local/share/daylog)
-//	darwin:  ~/Library/Application Support/daylog
-//	windows: %AppData%\daylog
+const Version = 2
+
+var BuildVersion = "athena-dev"
+
 func DataDir() (string, error) {
-	if dir := os.Getenv("DAYLOG_DIR"); dir != "" {
-		return dir, nil
+	if d := os.Getenv("DAYLOG_DIR"); d != "" {
+		return filepath.Abs(d)
 	}
 	if runtime.GOOS == "linux" {
-		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-			return filepath.Join(xdg, "daylog"), nil
+		base := os.Getenv("XDG_DATA_HOME")
+		if base == "" {
+			h, e := os.UserHomeDir()
+			if e != nil {
+				return "", e
+			}
+			base = filepath.Join(h, ".local", "share")
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home dir: %w", err)
-		}
-		return filepath.Join(home, ".local", "share", "daylog"), nil
+		return filepath.Join(base, "daylog"), nil
 	}
-	base, err := os.UserConfigDir() // AppData on Windows, Application Support on macOS
-	if err != nil {
-		return "", fmt.Errorf("resolve user data dir: %w", err)
-	}
-	return filepath.Join(base, "daylog"), nil
+	base, e := os.UserConfigDir()
+	return filepath.Join(base, "daylog"), e
 }
 
-func eventsDir() (string, error) {
+type Manifest struct {
+	Version  int    `json:"version"`
+	Protocol string `json:"protocol"`
+}
+
+func Ensure() error {
 	root, err := DataDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, "events"), nil
-}
-
-// DayFile returns the JSONL path for a date (one source of truth per day).
-func DayFile(day time.Time) (string, error) {
-	dir, err := eventsDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, day.Format("2006-01-02")+".jsonl"), nil
-}
-
-// Append writes one event as one line using O_APPEND, which is atomic for
-// writes of this size on Linux — concurrent agents need no locking (§5).
-func Append(e event.Event) error {
-	ts, err := time.Parse(time.RFC3339, e.TS)
-	if err != nil {
-		return fmt.Errorf("event has invalid ts %q: %w", e.TS, err)
-	}
-	path, err := DayFile(ts)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create events dir: %w", err)
+	// Initialization lock lives beside the root so an unsupported directory is untouched.
+	unlock, err := durable.Lock(root+".init.lock", true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	var m Manifest
+	err = durable.Read(filepath.Join(root, "store.json"), &m)
+	if err == nil {
+		if m.Version != Version || m.Protocol != "local-append-once-v2" {
+			return fmt.Errorf("unsupported store version/protocol; choose a fresh DAYLOG_DIR")
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("unsupported unversioned data at %s; choose a fresh DAYLOG_DIR (no migration)", root)
+	}
+	if err := durable.Mkdir(root); err != nil {
+		return err
+	}
+	if err := durable.Private(root, true); err != nil {
+		return err
+	}
+	// Marker first: incomplete directory creation is safe to resume.
+	return durable.JSON(filepath.Join(root, "store.json"), Manifest{Version, "local-append-once-v2"})
+}
+func DayFile(day time.Time) (string, error) {
+	r, e := DataDir()
+	return filepath.Join(r, "events", day.Format("2006-01-02")+".jsonl"), e
+}
+func ledgerLock() (func(), error) {
+	if err := Ensure(); err != nil {
+		return nil, err
+	}
+	r, _ := DataDir()
+	return durable.Lock(filepath.Join(r, "store.lock"), true)
+}
+func Append(e event.Event) error { _, err := AppendOnce(e); return err }
+
+// AppendOnce scans under the same lock as every human and automated writer.
+// A successful retry returns the original ID before checking stale revisions.
+func AppendOnce(e event.Event) (string, error) {
+	if err := e.Validate(); err != nil {
+		return "", err
+	}
+	unlock, err := ledgerLock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	all, err := readAll()
+	if err != nil {
+		return "", err
+	}
+	for _, old := range all {
+		if old.PublicationKey == e.PublicationKey {
+			return old.ID, nil
+		}
+	}
+	if err := event.CheckTargets(e, event.Effective(all)); err != nil {
+		return "", err
+	}
+	e.Sequence = len(all) + 1
+	ts, _ := time.Parse(time.RFC3339Nano, e.RecordedAt)
+	path, _ := DayFile(ts)
+	if err := durable.Mkdir(filepath.Dir(path)); err != nil {
+		return "", err
 	}
 	line, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("encode event: %w", err)
+		return "", err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if len(line) > 1024*1024-1 {
+		return "", fmt.Errorf("event exceeds ledger record cap")
+	}
+	line = append(line, '\n')
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
+		return "", err
 	}
-	defer f.Close()
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("append to %s: %w", path, err)
-	}
-	return f.Close()
-}
-
-// ReadDay loads one day's events. A missing file is an empty day, not an
-// error. Torn or malformed lines are skipped, never fatal (§8: line-oriented
-// parsing skips a torn final line).
-func ReadDay(day time.Time) ([]event.Event, error) {
-	path, err := DayFile(day)
-	if err != nil {
-		return nil, err
-	}
-	return readFile(path)
-}
-
-// ReadAll loads every day file in the store, sorted by ULID. Used to fold
-// cross-day state (a todo opened Monday is still open Thursday).
-func ReadAll() ([]event.Event, error) {
-	dir, err := eventsDir()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read events dir: %w", err)
-	}
-	var all []event.Event
-	for _, de := range entries {
-		if de.IsDir() || !strings.HasSuffix(de.Name(), ".jsonl") {
-			continue
+	if err = durable.Private(path, false); err == nil {
+		var n int
+		n, err = f.Write(line)
+		if err == nil && n != len(line) {
+			err = io.ErrShortWrite
 		}
-		evs, err := readFile(filepath.Join(dir, de.Name()))
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	ce := f.Close()
+	if err == nil {
+		err = ce
+	}
+	if err != nil {
+		return "", err
+	}
+	if err = durable.SyncDir(filepath.Dir(path)); err != nil {
+		return "", err
+	}
+	return e.ID, nil
+}
+func ReadAll() ([]event.Event, error) {
+	u, e := ledgerLock()
+	if e != nil {
+		return nil, e
+	}
+	defer u()
+	return readAll()
+}
+func ReadDay(day time.Time) ([]event.Event, error) {
+	all, err := ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	out := []event.Event{}
+	for _, e := range all {
+		if strings.HasPrefix(e.RecordedAt, day.Format("2006-01-02")) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+func readAll() ([]event.Event, error) {
+	root, _ := DataDir()
+	paths, err := filepath.Glob(filepath.Join(root, "events", "*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	all := []event.Event{}
+	keys := map[string]bool{}
+	ids := map[string]bool{}
+	for _, p := range paths {
+		evs, err := readFile(p)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, evs...)
+		for _, e := range evs {
+			if keys[e.PublicationKey] || ids[e.ID] {
+				return nil, fmt.Errorf("duplicate publication key/id in %s", p)
+			}
+			keys[e.PublicationKey] = true
+			ids[e.ID] = true
+			all = append(all, e)
+		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	// Local sequence is assigned under the shared lock, independent of clock skew.
+	sort.Slice(all, func(i, j int) bool { return all[i].Sequence < all[j].Sequence })
+	for i, e := range all {
+		if e.Sequence != i+1 {
+			return nil, fmt.Errorf("ambiguous ledger sequence at %s", e.ID)
+		}
+	}
 	return all, nil
 }
-
 func readFile(path string) ([]event.Event, error) {
 	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, err
 	}
 	defer f.Close()
-	var evs []event.Event
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
+	r := bufio.NewReaderSize(f, 1024*1024)
+	out := []event.Event{}
+	for lineNo := 1; ; lineNo++ {
+		line, err := r.ReadSlice('\n')
+		if len(line) > 1024*1024 {
+			return nil, fmt.Errorf("oversized ledger record %s:%d", path, lineNo)
+		}
+		if err == io.EOF && len(line) == 0 {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("torn trailing record %s:%d; publication refused; preserve bytes and run explicit repair: %w", path, lineNo, err)
 		}
 		var e event.Event
-		if err := json.Unmarshal([]byte(line), &e); err != nil || e.ID == "" {
-			continue // torn or foreign line: tolerate, never crash (§10)
+		if err := durable.Decode(bytes.TrimSuffix(line, []byte{'\n'}), &e); err != nil {
+			return nil, fmt.Errorf("malformed ledger %s:%d: %w", path, lineNo, err)
 		}
-		evs = append(evs, e)
+		if err := e.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid ledger %s:%d: %w", path, lineNo, err)
+		}
+		out = append(out, e)
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", path, err)
+	return out, nil
+}
+
+// RepairTail only removes an unterminated last line, saving all original bytes.
+// Malformed complete records are never automatically repaired.
+func RepairTail(day time.Time) error {
+	u, err := ledgerLock()
+	if err != nil {
+		return err
 	}
-	return evs, nil
+	defer u()
+	p, _ := DayFile(day)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	if len(b) == 0 || b[len(b)-1] == '\n' {
+		return fmt.Errorf("no torn tail")
+	}
+	backup := p + ".damaged-" + event.NewID(time.Now())
+	if err := durable.Write(backup, b); err != nil {
+		return err
+	}
+	end := bytes.LastIndexByte(b, '\n') + 1
+	return durable.Write(p, b[:end])
 }

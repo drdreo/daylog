@@ -17,6 +17,8 @@ Item {
   }
 
   readonly property string daylogPath: String(setting("daylogPath", "daylog"))
+  readonly property string dataDir: String(setting("dataDir", ""))
+  function cli(args) { return [daylogPath].concat(dataDir ? ["--data-dir", dataDir] : []).concat(args) }
   readonly property int refreshIntervalSec: Math.max(10, Number(setting("refreshIntervalSec", 60)))
 
   // The parsed `daylog today --json` object; null until the first good read.
@@ -145,13 +147,13 @@ Item {
       return
     }
     todayProcess.command = viewDate === ""
-      ? [daylogPath, "today", "--json"]
-      : [daylogPath, "today", viewDate, "--json"]
+      ? cli(["today", "--json"])
+      : cli(["today", viewDate, "--json"])
     todayProcess.running = true
   }
 
   // One PR poll cycle through the same CLI the systemd timer uses; the
-  // refresh in onExited picks up whatever transitions the poll logged.
+  // refresh in onExited picks up the separate PR snapshot.
   function pollNow() {
     if (pollProcess.running) return
     polling = true
@@ -163,16 +165,17 @@ Item {
     if (text.trim() === "") {
       // A missing or failed binary produces no stdout. Keep showing the last
       // good day if we have one; only a widget that never loaded says why.
-      if (day === null)
-        error = "No output from `" + daylogPath + " today --json` — is the daylog CLI installed and on PATH?"
+      error = "No output from `" + daylogPath + " today --json` — is the daylog CLI installed and on PATH?"
       return
     }
     try {
-      day = JSON.parse(text)
+      var parsed = JSON.parse(text)
+      if (parsed.version !== 2) throw new Error("Unsupported view version")
+      day = parsed
       error = ""
       updatedMs = Date.now()
     } catch (e) {
-      if (day === null) error = "Could not parse daylog output: " + e
+      error = "Could not parse daylog output: " + e
     }
   }
 
@@ -221,7 +224,7 @@ Item {
   Process {
     id: pollProcess
     running: false
-    command: [root.daylogPath, "poll", "gh"]
+    command: root.cli(["poll", "gh"])
     onExited: {
       root.polling = false
       root.refresh()
@@ -238,7 +241,7 @@ Item {
   // never resolves fuzzily on the user's behalf.
   function markDone(id) {
     if (doneProcess.running || String(id) === "") return
-    doneProcess.command = [daylogPath, "done", String(id)]
+    doneProcess.command = cli(["done", String(id), "--source", "human:widget"])
     doneProcess.running = true
   }
 
@@ -260,7 +263,7 @@ Item {
     if (verdict !== "accept" && verdict !== "decline") return
     // A click is the human ruling, so the identity is stated outright rather
     // than inherited from whatever $DAYLOG_SOURCE the widget was launched with.
-    triageProcess.command = [daylogPath, verdict, String(id), "--source", "human:widget"]
+    triageProcess.command = cli([verdict, String(id), "--source", "human:widget"])
     triageProcess.running = true
   }
 

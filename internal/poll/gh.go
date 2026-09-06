@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
 	"sort"
 	"strings"
@@ -295,6 +296,7 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 	})
 
 	cur := &snapshot.GHPRs{
+		Version:   2,
 		FetchedAt: now.Format(time.RFC3339),
 		PRs:       map[string]snapshot.PR{},
 	}
@@ -311,7 +313,11 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 		if strings.ToLower(v.State) != "open" {
 			continue // merged or closed between search and detail fetch
 		}
-		ref := fmt.Sprintf("gh:pr:%s#%d", k.repo, k.number)
+		prURL, err := url.Parse(v.URL)
+		if err != nil || prURL.Scheme != "https" || prURL.Hostname() == "" {
+			return nil, filter, fmt.Errorf("invalid PR URL for %s#%d", k.repo, k.number)
+		}
+		ref := fmt.Sprintf("gh:pr:%s/%s#%d", strings.ToLower(prURL.Hostname()), k.repo, k.number)
 		cur.PRs[ref] = snapshot.PR{
 			Ref:       ref,
 			Repo:      k.repo,

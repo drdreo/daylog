@@ -20,7 +20,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	in := &GHPRs{
 		FetchedAt: "2026-08-23T12:00:00Z",
 		PRs: map[string]PR{
-			"gh:pr:o/r#7": {Ref: "gh:pr:o/r#7", Repo: "o/r", Number: 7, Title: "T",
+			"gh:pr:github.com/o/r#7": {Ref: "gh:pr:github.com/o/r#7", Repo: "o/r", Number: 7, Title: "T",
 				URL: "u", State: "open", Draft: true, Checks: "pending", Review: "none", UpdatedAt: "x"},
 		},
 	}
@@ -31,7 +31,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.FetchedAt != in.FetchedAt || len(out.PRs) != 1 || out.PRs["gh:pr:o/r#7"] != in.PRs["gh:pr:o/r#7"] {
+	if out.FetchedAt != in.FetchedAt || len(out.PRs) != 1 || out.PRs["gh:pr:github.com/o/r#7"] != in.PRs["gh:pr:github.com/o/r#7"] {
 		t.Fatalf("round trip = %+v", out)
 	}
 	// Atomic replace leaves no temp files behind.
@@ -52,5 +52,13 @@ func TestLoadCorruptIsAnError(t *testing.T) {
 	}
 	if _, err := LoadGHPRs(); err == nil {
 		t.Fatal("corrupt snapshot must surface as an error, not silent data")
+	}
+	for _, body := range []string{`{"version":1,"prs":{}}`, `{"version":2,"version":2,"prs":{}}`, `{"version":2,"unknown":true,"prs":{}}`} {
+		if err := os.WriteFile(filepath.Join(dir, "state", "gh-prs.json"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadGHPRs(); err == nil {
+			t.Fatalf("accepted unsupported/ambiguous snapshot %s", body)
+		}
 	}
 }

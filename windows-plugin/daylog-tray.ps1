@@ -55,12 +55,18 @@ function Find-Daylog {
     return ''
 }
 
+function Quote-NativeArgument([string]$Arg) {
+    $escaped = $Arg -replace '(\\*)"', '$1$1\"'
+    return '"' + ($escaped -replace '(\\+)$', '$1$1') + '"'
+}
+
 # Run daylog without flashing a console window (this script runs hidden).
 function Invoke-Daylog {
     param([string[]]$ArgList)
+    if ($env:DAYLOG_DIR) { $ArgList = @('--data-dir', $env:DAYLOG_DIR) + $ArgList }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $script:Bin
-    $psi.Arguments = ($ArgList | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join ' '
+    $psi.Arguments = ($ArgList | ForEach-Object { Quote-NativeArgument $_ }) -join ' '
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
@@ -82,10 +88,6 @@ function Truncate([string]$Text, [int]$Max) {
     return $Text.Substring(0, $Max - 1) + '…'
 }
 
-function Get-Clock($Ts) {
-    try { return ([System.DateTimeOffset]"$Ts").LocalDateTime.ToString('HH:mm') } catch { return '' }
-}
-
 function Get-ShortDateTime($Ts) {
     try { return ([System.DateTimeOffset]"$Ts").LocalDateTime.ToString('MMM d HH:mm') } catch { return '' }
 }
@@ -94,17 +96,16 @@ function Get-ShortDateTime($Ts) {
 # clock its row leads with — the filing time is the other half of the story,
 # not the headline.
 function Get-LogClock($E) {
-    if ("$($E.type)" -eq 'todo' -and $E.done_ts) { return (Get-Clock $E.done_ts) }
-    return (Get-Clock $E.ts)
+    return ([System.DateTimeOffset]"$($E.display_at)").ToString('HH:mm')
 }
 
 # When a closed todo was originally taken on. Carries the date once the todo
 # outlived its filing day, so "filed 09:12" cannot read as this morning.
 function Get-FiledStamp($E) {
-    if ("$($E.type)" -ne 'todo' -or -not $E.done_ts) { return '' }
+    if ("$($E.type)" -ne 'todo' -or -not $E.done) { return '' }
     try {
-        $filed = ([System.DateTimeOffset]"$($E.ts)").LocalDateTime
-        $closed = ([System.DateTimeOffset]"$($E.done_ts)").LocalDateTime
+        $filed = [System.DateTimeOffset]"$($E.filed_at)"
+        $closed = [System.DateTimeOffset]"$($E.display_at)"
         if ($filed.Date -ne $closed.Date) { return $filed.ToString('MMM d HH:mm') }
         return $filed.ToString('HH:mm')
     } catch { return '' }
@@ -218,10 +219,18 @@ function Get-PrStatusLabel($Pr) {
     return 'open'
 }
 
+function Get-EntryUrl($E) {
+    foreach ($ref in $E.refs) {
+        if ("$ref" -match '^gh:pr:([a-zA-Z0-9.-]+)/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$') {
+            return "https://$($Matches[1])/$($Matches[2])/pull/$($Matches[3])"
+        }
+    }
+    return ''
+}
+
 function Get-EntryTooltip($E) {
     if (-not $E) { return '' }
     $parts = @((Get-LogClock $E) + ' · ' + "$($E.source)" + ' · ' + "$($E.type)")
-    if ($E.original_type) { $parts += "was $($E.original_type)" }
     $filed = Get-FiledStamp $E
     if ($filed) { $parts += "filed $filed" }
     if ($E.refs -and @($E.refs).Count -gt 0) { $parts += (@($E.refs) -join ', ') }
@@ -239,7 +248,6 @@ function Get-EntryGlyph($E) {
 
 function Get-EntryText($E, [bool]$WithTime) {
     $text = (Get-EntryGlyph $E) + "$($E.tldr)"
-    if ($E.pr) { $text += '  [' + (Get-PrStatusLabel $E.pr) + ']' }
     # Both moments on the row itself: the leading clock is when the todo was
     # finished, so the line still has to say when it was taken on — a todo
     # carried for three days should say so without a hover.
@@ -340,7 +348,7 @@ function Set-TrayIcon {
 $script:OpenUrlHandler = { param($s, $e) if ($s.Tag) { Start-Process $s.Tag } }
 $script:MarkDoneHandler = {
     param($s, $e)
-    try { [void](Invoke-Daylog @('done', "$($s.Tag)")) }
+    try { [void](Invoke-Daylog @('done', "$($s.Tag)", '--source', 'human:widget')) }
     catch { $script:Notify.ShowBalloonTip(4000, 'Daylog', "$($_.Exception.Message)", 'Error') }
     Update-Widget
 }
@@ -404,13 +412,12 @@ function Add-Row {
 # than exiled to a second list) and get the accept/decline verdict pair;
 # everything else just gets the usual lifecycle actions.
 function Add-TodoRow($Menu, $Entry, [bool]$Untriaged) {
-    $pr = $Entry.pr
-    $alarming = $pr -and ("$($pr.checks)" -eq 'failing')
+    $url = Get-EntryUrl $Entry
     $label = Truncate (Get-EntryText $Entry $false) 70
     if ($Untriaged) { $label = "* $label" }
     $it = New-Object System.Windows.Forms.ToolStripMenuItem((Get-MenuText $label))
     $it.ToolTipText = if ($Untriaged) { 'Awaiting triage — ' + (Get-EntryTooltip $Entry) } else { Get-EntryTooltip $Entry }
-    if ($alarming -or $Untriaged) { $it.ForeColor = $script:Urgent }
+    if ($Untriaged) { $it.ForeColor = $script:Urgent }
     if ($Untriaged) {
         $accept = New-Object System.Windows.Forms.ToolStripMenuItem('Accept')
         $accept.Tag = "$($Entry.id)"
@@ -422,14 +429,15 @@ function Add-TodoRow($Menu, $Entry, [bool]$Untriaged) {
         [void]$it.DropDownItems.Add($decline)
         [void]$it.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     }
-    $done = New-Object System.Windows.Forms.ToolStripMenuItem('Mark done')
-    $done.Tag = "$($Entry.id)"
-    $done.Add_Click($script:MarkDoneHandler)
-    [void]$it.DropDownItems.Add($done)
-    if ($pr -and $pr.url) {
-        $open = New-Object System.Windows.Forms.ToolStripMenuItem(
-            (Get-MenuText ("Open $($pr.repo)#$($pr.number) — " + (Get-PrStatusLabel $pr))))
-        $open.Tag = "$($pr.url)"
+    if (-not $Untriaged) {
+        $done = New-Object System.Windows.Forms.ToolStripMenuItem('Mark done')
+        $done.Tag = "$($Entry.id)"
+        $done.Add_Click($script:MarkDoneHandler)
+        [void]$it.DropDownItems.Add($done)
+    }
+    if ($url) {
+        $open = New-Object System.Windows.Forms.ToolStripMenuItem('Open referenced PR')
+        $open.Tag = $url
         $open.Add_Click($script:OpenUrlHandler)
         [void]$it.DropDownItems.Add($open)
     }
@@ -524,11 +532,9 @@ function Build-Menu {
         Add-DayNav $m "$($Day.date)"
         if ($entries.Count -gt 0) {
             foreach ($e in $entries) {
-                $pr = $e.pr
-                $alarming = $pr -and ("$($pr.checks)" -eq 'failing')
                 $color = $null
-                if ($alarming) { $color = $script:Urgent } elseif ($e.done -eq $true) { $color = $script:Dim }
-                $url = if ($pr -and $pr.url) { "$($pr.url)" } else { '' }
+                if ($e.done -eq $true) { $color = $script:Dim }
+                $url = Get-EntryUrl $e
                 $text = (Truncate (Get-EntryText $e $true) 78) + '  — ' + (Get-ShortSource $e.source)
                 [void](Add-Row $m $text -Tooltip (Get-EntryTooltip $e) -Color $color -Url $url)
             }
@@ -571,7 +577,10 @@ function Update-Widget {
         $errText = 'daylog CLI not found — install it (go install github.com/drdreo/daylog@latest) or set DAYLOG_PATH'
     } else {
         $argv = if ($script:ViewDate) { @('today', $script:ViewDate, '--json') } else { @('today', '--json') }
-        try { $day = Invoke-Daylog $argv | ConvertFrom-Json }
+        try {
+            $day = Invoke-Daylog $argv | ConvertFrom-Json
+            if ($day.version -ne 2) { $day = $null; throw 'Unsupported view version; update widget and binary together' }
+        }
         catch { $errText = '`daylog ' + ($argv -join ' ') + '` failed: ' + $_.Exception.Message }
     }
 

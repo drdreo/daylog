@@ -1,111 +1,36 @@
-# Daylog — Windows 11 tray widget
+# Daylog — Windows tray widget
 
-A system tray (notification area) widget for Windows 11 — and Windows 10.
-One icon, one menu: open todos with agent proposals to triage, today's
-entries, and every open PR with live checks/review state — the Windows
-sibling of the Omarchy bar widget and the macOS SwiftBar plugin.
+A Windows PowerShell 5.1/WinForms tray widget consuming **v2** `daylog today --json`. It shows curated narrative, open todos with explicit proposals, and a separate current Open PRs snapshot. Queued/shadow reports are not journal entries.
 
-Like its siblings, this is deliberately the thinnest component in the system
-(ARCHITECTURE.md §9): it shells out to `daylog today --json` and renders the
-result. All state, folding, and PR joining happen in the CLI — the widget is
-a dumb consumer and is replaceable in an afternoon. It is a single Windows
-PowerShell 5.1 script using WinForms, so it needs nothing beyond what
-Windows ships — no runtime, no framework, no installer dependencies.
-
-## What it shows
-
-- **Tray icon** — the day's note (drawn to match your light/dark taskbar),
-  turning into a red badge with a count when something needs you: an agent
-  proposal awaiting triage, or an open PR with failing checks. An orange
-  warning triangle means the widget itself could not load the day.
-- **Open todos** — every open todo in one list, yours and the agents'. An
-  agent proposal still awaiting your verdict is marked `*` and coloured.
-- **The day's log** — its entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are checked and dimmed. The
-  heading names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`)
-  and is itself the control for it: click to walk back a day.
-- **Open PRs** — the poller snapshot, marked STALE when it is hours old.
-
-## Actions
-
-| Where | Action |
-|---|---|
-| Tray icon | Left or right click opens the menu |
-| Untriaged proposal → submenu | **Accept** (`daylog accept <id>` — adopt it as yours; it stays a todo and stops nagging), **Decline** (`daylog decline <id>` — it drops out of every view) |
-| Todo row → submenu | **Mark done** (`daylog done <id>`), **Open PR** when the entry references one |
-| Day heading | Click walks back a day; a `↩ Back to today` row appears while you are away from today |
-| Today entry / PR row | Click opens the PR in the browser |
-| Footer | **Refresh** re-runs `daylog today --json`; **Poll GitHub** runs `daylog poll gh` and re-renders; **Exit** quits the widget |
-
-Hover any entry for the full detail (source, refs, close note).
-
-## Walking back through days
-
-The day heading is the control for the day, so navigation costs no rows of
-its own: clicking `◀ TODAY · MON, AUG 24` walks back a day and rebuilds the
-menu against it (`daylog today 2026-08-19 --json`). A single
-`↩ Back to today` row appears underneath while you are away, and only then.
-Only the log section moves: open todos are obligations that don't expire at
-midnight and PRs are live state, so the tray badge keeps counting what needs
-you *now* whichever day you are reading. An empty day says which day it was
-empty about, so an untouched Tuesday can't read as a quiet morning.
-
-It is a click and not `←`/`→` because an open Windows menu owns the arrow keys
-for its own row and submenu navigation. (The Omarchy panel is a real focused
-window, so there the arrow keys do this directly.) The SwiftBar sibling hides
-its way back under `⌥` on the heading row itself; WinForms menus have no
-alternate item, hence the extra row here. The day you picked expires after 10
-minutes: this is a *today* widget, and a tray icon that still describes
-Tuesday three hours later is worse than one that forgets.
+Narrative time is the required `display_at` in its captured offset. Completed todos retain `filed_at`. Host-qualified PR refs supply narrative links without attaching live PR/CI status to work entries.
 
 ## Install
 
-Install the daylog CLI first (`go install github.com/drdreo/daylog@latest`,
-or build `daylog.exe` and put it on `PATH`). Then, from the daylog checkout
-in a PowerShell prompt:
+Build the matching binary and [initialize a fresh v2 store](../docs/windows-setup.md). Set per-user environment variables (then restart the widget/login session):
 
 ```powershell
-cd windows-plugin
-.\install.ps1              # copies the widget, adds a Startup shortcut, launches it
-.\install.ps1 -PollTask    # ...and schedules `daylog poll gh` every 10 minutes
+[Environment]::SetEnvironmentVariable('DAYLOG_PATH', 'C:\Tools\daylog.exe', 'User')
+[Environment]::SetEnvironmentVariable('DAYLOG_DIR', "$env:LOCALAPPDATA\daylog-v2", 'User')
 ```
 
-That copies `daylog-tray.ps1` to `%LOCALAPPDATA%\daylog\` and creates a
-Startup shortcut that runs it hidden. (A brief console flash at login is
-normal — that's PowerShell starting windowless.)
+From this checkout, run `windows-plugin\install.ps1` to copy the widget, add a Startup shortcut, and launch it. `-NoStartup` skips the shortcut; `-PollTask` explicitly schedules a separate ten-minute GitHub poll. Inspect the script before enabling execution under your local PowerShell policy. Worker setup/scheduling is separate.
 
-Or run it by hand, no install:
+Or launch manually:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File .\daylog-tray.ps1
+powershell -NoProfile -WindowStyle Hidden -File .\windows-plugin\daylog-tray.ps1
 ```
 
-For hacking, just re-run that line against your checkout — **Exit** the
-running instance first (it is single-instance; a second launch exits
-silently).
+Update binary/widget together; unsupported view versions are rejected. Exit the previous instance before restarting (single-instance mutex). If Windows hides the icon, move it out of the notification overflow.
 
-Windows hides new tray icons by default: drag the note icon out of the
-overflow chevron, or enable it under Settings → Personalization → Taskbar →
-Other system tray icons.
+## Settings and actions
 
-## Settings
+- `DAYLOG_PATH`: absolute CLI executable (otherwise common install locations/PATH).
+- `DAYLOG_DIR`: absolute fresh store, explicitly passed to all commands.
+- `DAYLOG_REFRESH_SEC`: refresh interval, default 60.
+- Proposals offer **Accept/Decline**, adopted todos **Mark done**. Actions use `human:widget`.
+- Narrative/PR rows open referenced PRs; hover shows details.
+- Click the day heading to go back; **Back to today** restores today. The day selection expires after ten minutes. Obligations/PRs remain current.
+- Footer: refresh, poll GitHub, exit.
 
-Environment variables (set per-user via Settings → System → About →
-Advanced system settings, or `setx`):
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `DAYLOG_PATH` | *(search PATH)* | Absolute path to the daylog CLI |
-| `DAYLOG_REFRESH_SEC` | `60` | How often to re-run `daylog today --json` |
-
-Without `DAYLOG_PATH`, the widget searches `PATH` plus the usual install
-locations (`%LOCALAPPDATA%\Programs\daylog`, `%USERPROFILE%\go\bin`).
-
-## Scheduling the poller
-
-The widget's **Poll GitHub** action polls on demand; for the background
-cadence use Task Scheduler — `install.ps1 -PollTask` sets it up, or by hand:
-
-```powershell
-schtasks /Create /TN "daylog poll gh" /SC MINUTE /MO 10 /TR "C:\path\to\daylog.exe poll gh"
-```
+Windows Go builds have been cross-compiled. WinForms rendering, task registration, PowerShell argument handling, ACLs and filesystem crash durability still require **Windows runtime validation**; they are not established by the macOS test run.

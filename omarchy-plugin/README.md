@@ -1,108 +1,45 @@
-# Daylog — Omarchy bar widget
+# Daylog — Omarchy widget
 
-A bar widget for [Omarchy 4 (Quattro)](https://omarchy.org)'s Quickshell-based
-desktop shell. One icon, one panel: today's entries, open todos, the agent
-inbox awaiting triage, and every open PR with live checks/review state.
+A Quickshell bar widget for Omarchy 4. It reads **v2** `daylog today --json`: curated narrative, open todos (with explicit agent proposals marked for adoption), and a separate current Open PRs snapshot. Queued/shadow reports are not entries.
 
-This is deliberately the thinnest component in the system (ARCHITECTURE.md §9):
-it shells out to `daylog today --json` and renders the result. All state,
-folding, and PR joining happen in the CLI — the widget is a dumb consumer and
-is replaceable in an afternoon.
-
-## What it shows
-
-- **Bar icon** — lights up (active color) when something needs you: an agent
-  proposal awaiting triage, or an open PR with failing checks.
-  Left-click toggles the panel, right-click runs `daylog poll gh`,
-  middle-click refreshes.
-- **Open todos** — every open todo in one list, yours and the agents'. An
-  agent proposal still awaiting your verdict is accented and marked `●`.
-- **The day's log** — its entries with time, source, and live PR status on
-  entries that reference a PR. Closed todos are struck through. The heading
-  names the day (`TODAY · MON, AUG 24`, `WED, AUG 19 · 5 DAYS AGO`) and
-  `←`/`→` walk to the days on either side.
-- **Open PRs** — the poller snapshot, marked STALE when it is hours old.
-
-## Keyboard
-
-The panel is fully keyboard-driven, one flat cursor over every row
-(todos → today → PRs):
-
-| Key | Action |
-|---|---|
-| `↑`/`↓` or `k`/`j` | Move the cursor |
-| `←`/`→` or `h`/`l` | Walk a day back or forward through the log |
-| `t` | Back to today |
-| `Enter` / `Space` / `o` | Open the selected PR in the browser (PR rows, or entries referencing one) |
-| `d` | Close the selected todo (`daylog done <id>`) |
-| `a` | Accept the selected agent proposal (`daylog accept <id>`) — adopt it as yours |
-| `x` | Decline the selected agent proposal (`daylog decline <id>`) — it drops out of every view |
-| `r` | Refresh |
-| `p` | Run `daylog poll gh` |
-| `Tab` | Switch to the neighboring bar panel |
-| `Esc` | Close |
-
-Rows are also clickable: clicking a PR (or an entry that references one)
-opens it in the browser, and the `◀`/`▶` labels under the day heading do
-what `←`/`→` do.
-
-Walking back re-runs the same read against another day
-(`daylog today 2026-08-19 --json`) and moves the log section alone: open
-todos are obligations that don't expire at midnight and PRs are live state,
-so the bar icon keeps flagging what needs you *now* whichever day you are
-reading. Forward stops at today, an empty day says which day it was empty
-about, and the panel opens on today again — walking back is an errand, not a
-setting.
+Narrative rows use `display_at` in its captured offset; completed todos also show `filed_at`. PR/CI status never decorates narrative rows. Host-qualified PR refs provide links without joining live status into accomplishments.
 
 ## Install
 
-From the daylog checkout, on an Omarchy machine:
+Build/install the matching CLI, initialize a fresh store, then explicitly copy the widget:
 
 ```sh
-./install.sh --omarchy       # copies the plugin + rescans + enables it
-```
-
-Or by hand:
-
-```sh
+./install.sh
 cp -r omarchy-plugin ~/.config/omarchy/plugins/drdreo.daylog
 omarchy-shell shell rescanPlugins
 omarchy plugin enable drdreo.daylog
-```
-
-For hacking, symlink instead of copying — the shell hot-reloads plugin code
-on every save under `~/.config/omarchy/plugins/`:
-
-```sh
-ln -s "$(pwd)/omarchy-plugin" ~/.config/omarchy/plugins/drdreo.daylog
-```
-
-Check it the way the shell does:
-
-```sh
 omarchy plugin validate ./omarchy-plugin
 ```
 
-> `omarchy plugin add <git-url>` expects `manifest.json` at the repo root, so
-> distributing through the registry at omarchyplugins.com means splitting this
-> directory into its own repo (e.g. `drdreo/omarchy-daylog`). Until then, the
-> copy/symlink install above is the path.
+Avoid overwriting an unrelated plugin directory. For development, symlink the directory instead. Runtime validation of this widget requires an Omarchy machine; Go cross-compilation does not test QML.
 
 ## Settings
 
-Inline on the widget's entry in `~/.config/omarchy/shell.json`
-(editable via the bar's widget settings UI):
+Configure the widget in `~/.config/omarchy/shell.json` or the widget settings UI:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `daylogPath` | `daylog` | Command or absolute path to the daylog CLI |
-| `refreshIntervalSec` | `60` | How often to re-run `daylog today --json` |
-| `icon` | `󰃭` | The bar glyph |
+| `daylogPath` | `daylog` | Absolute binary path recommended |
+| `dataDir` | empty | Absolute fresh v2 data directory; empty uses CLI default |
+| `refreshIntervalSec` | 60 | Refresh interval |
+| `icon` | `󰃭` | Bar glyph |
 
-## IPC
+The data directory is passed on **every read and action**, not inferred from the desktop shell's environment. Human actions explicitly use `human:widget`.
 
-```sh
-omarchy-shell shell call drdreo.daylog toggle
-omarchy-shell shell call drdreo.daylog refresh
-omarchy-shell shell call drdreo.daylog poll
-```
+## Controls
+
+Left-click toggles, right-click polls GitHub, middle-click refreshes. In the panel:
+
+- `↑/↓` or `j/k`: navigate rows; `Enter`, `Space`, or `o`: open referenced PR.
+- `←/→` or `h/l`: previous/next day; `t`: today. Only narrative changes day; obligations/PRs remain current.
+- `a` / `x`: adopt/decline a proposal; `d`: finish an adopted todo.
+- `r`: refresh; `p`: poll GitHub; `Esc`: close; `Tab`: neighboring panel.
+
+IPC: `omarchy-shell shell call drdreo.daylog toggle|refresh|poll`.
+
+Configure capture/editor scheduling separately with [`daylog setup`](../README.md). The widget is not a publisher or queue consumer.

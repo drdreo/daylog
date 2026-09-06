@@ -1,0 +1,9 @@
+[
+  {"name":"keep","report":"Implemented cancellation-safe refresh locking; captured regression test verifies two callers reuse one token.","decision":"publish","text":"Made token refresh cancellation-safe and verified concurrent callers reuse one token."},
+  {"name":"skip","report":"Retried the same test command; it passed again.","decision":"skip"},
+  {"name":"hold","report":"The rollout might be complete, but I have not checked the deployment.","decision":"hold"},
+  {"name":"unsupported-claim","report":"All customer data is now safe; no artifacts or verification available.","decision":"hold"},
+  {"name":"duplicate-report","report":"Repeated the earlier refresh fix report.","decision":"skip"},
+  {"name":"same-task-across-agents","report":"Second agent verified the refresh fix for the same explicitly linked task.","decision":"amend"},
+  {"name":"human-correction","report":"Agent suggests rewriting the already human-pinned refresh outcome.","decision":"skip"}
+]

@@ -35,7 +35,7 @@ events. Timer units to run this periodically are in docs/systemd/.
 
 One machine is rarely one context, so --owner (repeatable, or a comma-
 separated list) narrows the poll to certain repository owners; $DAYLOG_GH_OWNERS
-sets the same thing per machine and the flag wins. A "gh_owners" key in
+sets the same thing per machine and the flag wins. A "github_owners" key in
 <data>/config.json is the third option, and the one that also applies to
 polls launched outside a shell (a widget button, a scheduled job). A leading ! excludes an
 owner, and @me stands for your own account:

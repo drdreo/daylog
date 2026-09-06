@@ -13,11 +13,10 @@ import (
 var typeOrder = []string{event.TypeWork, event.TypeSidequest, event.TypeTodo, event.TypeNote}
 
 var typeHeadings = map[string]string{
-	event.TypeWork:       "Work",
-	event.TypeSidequest:  "Side quests",
-	event.TypeTodo:       "Todos completed",
-	event.TypeNote:       "Notes",
-	event.TypeTransition: "Transitions",
+	event.TypeWork:      "Work",
+	event.TypeSidequest: "Side quests",
+	event.TypeTodo:      "Todos completed",
+	event.TypeNote:      "Notes",
 }
 
 // Markdown renders the folded day as the human view. It is a derived
@@ -107,9 +106,6 @@ func entryLine(e Entry) string {
 	if filed := filedStamp(e); filed != "" {
 		b.WriteString(fmt.Sprintf(" _(filed %s)_", filed))
 	}
-	if e.OriginalType != "" {
-		b.WriteString(fmt.Sprintf(" _(was %s)_", e.OriginalType))
-	}
 	if e.DoneNote != "" {
 		b.WriteString(fmt.Sprintf(" _(closed: %s)_", e.DoneNote))
 	}
@@ -137,25 +133,20 @@ func snapshotAge(fetchedAt, generatedAt string) string {
 
 // logStamp is the timestamp the entry occupies in the day's log — the
 // closing time for a closed todo, matching where Fold placed it.
-func logStamp(e Entry) string {
-	if e.Type == event.TypeTodo && e.DoneTS != "" {
-		return e.DoneTS
-	}
-	return e.TS
-}
+func logStamp(e Entry) string { return e.DisplayAt }
 
 // filedStamp is when a closed todo was originally filed, empty for
 // everything else. It carries the date too once the todo has outlived the
 // day it was filed on — "filed 09:12" would otherwise read as this morning.
 func filedStamp(e Entry) string {
-	if e.Type != event.TypeTodo || e.DoneTS == "" {
+	if e.Type != event.TypeTodo || !e.Done {
 		return ""
 	}
-	filed, err := time.Parse(time.RFC3339, e.TS)
+	filed, err := time.Parse(time.RFC3339, e.FiledAt)
 	if err != nil {
 		return ""
 	}
-	if closed, err := time.Parse(time.RFC3339, e.DoneTS); err == nil &&
+	if closed, err := time.Parse(time.RFC3339, e.DisplayAt); err == nil &&
 		filed.Format("2006-01-02") != closed.Format("2006-01-02") {
 		return filed.Format("Jan 2 15:04")
 	}

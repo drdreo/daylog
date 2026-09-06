@@ -1,85 +1,126 @@
-// Package event defines the daylog event schema and write-time validation.
-// The CLI is the single write path (ARCHITECTURE.md §2): every rule that
-// keeps the store consistent lives here, not in producers.
+// Package event defines the single supported ledger and effective-entry contract.
 package event
 
 import (
 	"crypto/rand"
 	"fmt"
+	"github.com/oklog/ulid/v2"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/oklog/ulid/v2"
 )
 
-// MaxTLDRChars is enforced at write time; oversized entries are rejected,
-// never truncated (§5).
+const Version = 2
 const MaxTLDRChars = 280
-
-// Core event types (§4.2). Consumers must tolerate unknown types.
 const (
-	TypeWork       = "work"
-	TypeSidequest  = "sidequest"
-	TypeNote       = "note"
-	TypeTodo       = "todo"
-	TypeDone       = "done"
-	TypeReclassify = "reclassify"
-	TypeTriage     = "triage"
-	TypeTransition = "transition"
-)
-
-// Triage verdicts on an agent-filed todo (§5.2). Accepting adopts it as
-// the human's own without changing its type; declining hides it from every
-// rendered view. Both are append-only, so a later verdict reverses an
-// earlier one.
-const (
+	TypeWork        = "work"
+	TypeSidequest   = "sidequest"
+	TypeNote        = "note"
+	TypeTodo        = "todo"
+	TypeDone        = "done"
+	TypeTriage      = "triage"
+	TypeAmend       = "amend"
+	TypeDismiss     = "dismiss"
+	TypeRestore     = "restore"
+	TypeMerge       = "merge"
 	VerdictAccepted = "accepted"
 	VerdictDeclined = "declined"
 )
 
-// ValidateVerdict guards the triage vocabulary at write time.
-func ValidateVerdict(v string) error {
-	if v != VerdictAccepted && v != VerdictDeclined {
-		return fmt.Errorf("invalid verdict %q: must be %s or %s", v, VerdictAccepted, VerdictDeclined)
-	}
-	return nil
-}
-
-// AddableTypes are the types a producer may pass to `daylog add`.
 var AddableTypes = []string{TypeWork, TypeSidequest, TypeNote, TypeTodo}
 
-// Ctx is auto-captured by the CLI on add, never supplied by the caller (§4.1).
-type Ctx struct {
-	Repo   string `json:"repo,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	Cwd    string `json:"cwd,omitempty"`
+type Repository struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
 }
 
-// Event is one line in the day's JSONL file. Immutable once written.
+func (r Repository) Key() string {
+	if r.Host == "" || r.Path == "" {
+		return ""
+	}
+	return r.Host + "/" + r.Path
+}
+
+type Context struct {
+	Cwd           string     `json:"cwd"`
+	Worktree      string     `json:"worktree,omitempty"`
+	Branch        string     `json:"branch,omitempty"`
+	Head          string     `json:"head,omitempty"`
+	Repository    Repository `json:"repository"`
+	Session       string     `json:"session,omitempty"`
+	Turn          string     `json:"turn,omitempty"`
+	Task          string     `json:"task,omitempty"`
+	ParentSession string     `json:"parent_session,omitempty"`
+}
+
+// SameProject never treats two missing repository identities as a match.
+func SameDay(a, b string) bool {
+	at, ae := time.Parse(time.RFC3339Nano, a)
+	bt, be := time.Parse(time.RFC3339Nano, b)
+	return ae == nil && be == nil && at.Format("2006-01-02") == bt.Format("2006-01-02")
+}
+func SameProject(a, b Context) bool {
+	if a.Repository.Key() != "" && b.Repository.Key() != "" {
+		return a.Repository == b.Repository
+	}
+	ap := a.Worktree
+	if ap == "" {
+		ap = a.Cwd
+	}
+	bp := b.Worktree
+	if bp == "" {
+		bp = b.Cwd
+	}
+	return ap != "" && ap == bp
+}
+
+type Provenance struct {
+	Candidates []string `json:"candidates"`
+	Evidence   []string `json:"evidence"`
+	Sources    []string `json:"sources"`
+	Model      string   `json:"model"`
+	Policy     string   `json:"policy"`
+	Episode    string   `json:"episode"`
+}
+type Target struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+}
 type Event struct {
-	ID     string         `json:"id"`
-	TS     string         `json:"ts"`
-	Host   string         `json:"host"`
-	Source string         `json:"source"`
-	Type   string         `json:"type"`
-	TLDR   string         `json:"tldr"`
-	Refs   []string       `json:"refs"`
-	Ctx    Ctx            `json:"ctx"`
-	Parent *string        `json:"parent"`
-	Meta   map[string]any `json:"meta"`
+	Version        int         `json:"version"`
+	Sequence       int         `json:"sequence"`
+	ID             string      `json:"id"`
+	PublicationKey string      `json:"publication_key"`
+	RecordedAt     string      `json:"recorded_at"`
+	OccurredAt     string      `json:"occurred_at"`
+	TimeBasis      string      `json:"time_basis"`
+	Host           string      `json:"host"`
+	Source         string      `json:"source"`
+	Type           string      `json:"type"`
+	TLDR           string      `json:"tldr,omitempty"`
+	Refs           []string    `json:"refs"`
+	Context        Context     `json:"context"`
+	Targets        []Target    `json:"targets,omitempty"`
+	ToType         string      `json:"to_type,omitempty"`
+	Verdict        string      `json:"verdict,omitempty"`
+	Reason         string      `json:"reason,omitempty"`
+	Provenance     *Provenance `json:"provenance,omitempty"`
+}
+type Entry struct {
+	Event
+	Revision     int      `json:"revision"`
+	DisplayAt    string   `json:"display_at"`
+	FiledAt      string   `json:"filed_at"`
+	Done         bool     `json:"done"`
+	DoneNote     string   `json:"done_note,omitempty"`
+	Pinned       bool     `json:"pinned"`
+	Dismissed    bool     `json:"dismissed"`
+	MergedInto   string   `json:"merged_into,omitempty"`
+	Contributors []string `json:"contributors"`
 }
 
-// NewID returns a ULID for the given time: lexically sortable, globally
-// unique without coordination (§4.1).
-func NewID(t time.Time) string {
-	return ulid.MustNew(ulid.Timestamp(t), rand.Reader).String()
-}
-
-// ShortID is the display form of a ULID. A ULID's first 10 chars encode
-// the millisecond timestamp, so entries logged in the same second share an
-// 8-char prefix; 12 chars include entropy and stay pasteable.
+func NewID(t time.Time) string { return ulid.MustNew(ulid.Timestamp(t), rand.Reader).String() }
 func ShortID(id string) string {
 	if len(id) > 12 {
 		id = id[:12]
@@ -87,68 +128,238 @@ func ShortID(id string) string {
 	return strings.ToLower(id)
 }
 
-var sourceRe = regexp.MustCompile(`^(agent|human|poller):[a-z0-9][a-z0-9_.-]*$`)
+var sourceRe = regexp.MustCompile(`^(agent|human):[a-z0-9][a-z0-9_.-]*$`)
 
-// ValidateSource checks the namespaced producer identity (§4.1).
 func ValidateSource(s string) error {
 	if !sourceRe.MatchString(s) {
-		return fmt.Errorf("invalid source %q: must be agent:<name>, human:<name>, or poller:<name> (lowercase)", s)
+		return fmt.Errorf("invalid source %q: expected agent:<name> or human:<name>", s)
 	}
 	return nil
 }
-
-// ValidateTLDR enforces the non-empty, ≤280-char rule (§5).
+func Human(s string) bool     { return strings.HasPrefix(s, "human:") }
+func Narrative(t string) bool { return t == TypeWork || t == TypeSidequest || t == TypeNote }
 func ValidateTLDR(s string) error {
-	if strings.TrimSpace(s) == "" {
-		return fmt.Errorf("tldr must not be empty")
+	if strings.TrimSpace(s) == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > MaxTLDRChars || strings.ContainsAny(s, "\r\n\x00") {
+		return fmt.Errorf("tldr must be a nonempty single line of at most %d characters", MaxTLDRChars)
 	}
-	if strings.ContainsAny(s, "\n\r") {
-		return fmt.Errorf("tldr must be a single line")
+	return nil
+}
+func ValidateAddType(t string) error {
+	if Narrative(t) || t == TypeTodo {
+		return nil
 	}
-	if n := utf8.RuneCountInString(s); n > MaxTLDRChars {
-		return fmt.Errorf("tldr is %d chars, limit is %d: rewrite it shorter (entries are rejected, not truncated)", n, MaxTLDRChars)
+	return fmt.Errorf("invalid report type %q", t)
+}
+func ValidateVerdict(v string) error {
+	if v != VerdictAccepted && v != VerdictDeclined {
+		return fmt.Errorf("invalid verdict %q", v)
 	}
 	return nil
 }
 
-// ValidateAddType restricts `daylog add` to the producer vocabulary.
-func ValidateAddType(t string) error {
-	for _, ok := range AddableTypes {
-		if t == ok {
-			return nil
+var typedRef = regexp.MustCompile(`^(gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*|(linear|jira):[A-Z][A-Z0-9]*-[1-9][0-9]*)$`)
+var shortRef = regexp.MustCompile(`^#[1-9][0-9]*$`)
+var trackerRef = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[1-9][0-9]*$`)
+
+func NormalizeRef(r string, repo Repository) (string, error) {
+	r = strings.TrimSpace(r)
+	if shortRef.MatchString(r) && repo.Key() != "" {
+		r = "gh:pr:" + repo.Key() + r
+	}
+	if trackerRef.MatchString(r) {
+		r = "linear:" + r
+	}
+	if !typedRef.MatchString(r) {
+		return "", fmt.Errorf("invalid ref %q: use gh:pr:host/owner/repo#N, linear:ID-N, jira:ID-N, or #N in a repository", r)
+	}
+	return r, nil
+}
+func (e Event) Validate() error {
+	if e.Version != Version {
+		return fmt.Errorf("unsupported event version %d (want %d)", e.Version, Version)
+	}
+	if _, err := ulid.ParseStrict(e.ID); err != nil {
+		return fmt.Errorf("invalid event id: %w", err)
+	}
+	if e.PublicationKey == "" || len(e.PublicationKey) > 256 {
+		return fmt.Errorf("publication key required and bounded")
+	}
+	if err := ValidateSource(e.Source); err != nil {
+		return err
+	}
+	for _, ts := range []string{e.RecordedAt, e.OccurredAt} {
+		if _, err := time.Parse(time.RFC3339Nano, ts); err != nil {
+			return fmt.Errorf("invalid required timestamp: %w", err)
 		}
 	}
-	return fmt.Errorf("invalid type %q: must be one of %s", t, strings.Join(AddableTypes, "|"))
+	if e.TimeBasis != "report" && e.TimeBasis != "native" && e.TimeBasis != "human" {
+		return fmt.Errorf("invalid time basis")
+	}
+	if len(e.Refs) > 32 || len(e.Targets) > 16 || len(e.Reason) > 1024 || len(e.TLDR) > 4096 {
+		return fmt.Errorf("event exceeds bounds")
+	}
+	for _, r := range e.Refs {
+		if _, err := NormalizeRef(r, Repository{}); err != nil {
+			return err
+		}
+	}
+	switch e.Type {
+	case TypeWork, TypeSidequest, TypeNote, TypeTodo:
+		if len(e.Targets) != 0 {
+			return fmt.Errorf("new entry cannot target existing entries")
+		}
+		if err := ValidateTLDR(e.TLDR); err != nil {
+			return err
+		}
+	case TypeAmend, TypeMerge:
+		if err := ValidateTLDR(e.TLDR); err != nil {
+			return err
+		}
+		if e.ToType != "" && !Narrative(e.ToType) {
+			return fmt.Errorf("amend cannot create obligations")
+		}
+		fallthrough
+	case TypeDone, TypeTriage, TypeDismiss, TypeRestore:
+		n := 1
+		if e.Type == TypeMerge {
+			n = 2
+		}
+		if len(e.Targets) < n || (e.Type != TypeMerge && len(e.Targets) != 1) {
+			return fmt.Errorf("invalid target count")
+		}
+		seen := map[string]bool{}
+		for _, t := range e.Targets {
+			if t.ID == "" || t.Revision < 1 || seen[t.ID] {
+				return fmt.Errorf("invalid or duplicate target")
+			}
+			seen[t.ID] = true
+		}
+		if (e.Type == TypeDone || e.Type == TypeTriage || e.Type == TypeDismiss || e.Type == TypeRestore) && !Human(e.Source) {
+			return fmt.Errorf("operation requires human source")
+		}
+		if e.Type == TypeTriage {
+			if err := ValidateVerdict(e.Verdict); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported event type %q", e.Type)
+	}
+	if !Human(e.Source) && Narrative(e.Type) && e.Provenance == nil {
+		return fmt.Errorf("agent narrative requires editorial provenance")
+	}
+	return nil
 }
 
-var (
-	prShorthandRe = regexp.MustCompile(`^#(\d+)$`)
-	schemeRe      = regexp.MustCompile(`^[a-z][a-z0-9]*:`)
-	trackerIDRe   = regexp.MustCompile(`^[A-Z][A-Z0-9]+-\d+$`)
-)
-
-// NormalizeRef turns caller shorthand into a typed URI (§4.3).
-//   - "#142" inside a repo context → "gh:pr:owner/repo#142"
-//   - "ABC-123" → "linear:ABC-123" (Linear is the only tracker in use;
-//     Jira callers must pass an explicit "jira:" ref)
-//   - anything already scheme-qualified passes through untouched, so new
-//     producers can introduce ref schemes before consumers learn them.
-func NormalizeRef(ref, ctxRepo string) (string, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", fmt.Errorf("empty ref")
-	}
-	if m := prShorthandRe.FindStringSubmatch(ref); m != nil {
-		if ctxRepo == "" {
-			return "", fmt.Errorf("ref %q needs a repo context: run inside a git repo or use the full form gh:pr:owner/repo#%s", ref, m[1])
+// Effective applies events in ledger order, including suppressed identities.
+func Effective(all []Event) map[string]Entry {
+	out := map[string]Entry{}
+	for _, e := range all {
+		if len(e.Targets) == 0 {
+			out[e.ID] = Entry{Event: e, Revision: 1, DisplayAt: e.OccurredAt, FiledAt: e.OccurredAt, Contributors: []string{e.ID}}
+			continue
 		}
-		return fmt.Sprintf("gh:pr:%s#%s", ctxRepo, m[1]), nil
+		for i, t := range e.Targets {
+			en, ok := out[t.ID]
+			if !ok {
+				continue
+			}
+			en.Revision++
+			switch e.Type {
+			case TypeAmend:
+				en.Refs = unique(append(append([]string{}, en.Refs...), e.Refs...))
+				en.TLDR = e.TLDR
+				if e.ToType != "" {
+					en.Type = e.ToType
+				}
+				en.Pinned = en.Pinned || Human(e.Source)
+			case TypeDismiss:
+				en.Dismissed = true
+			case TypeRestore:
+				en.Dismissed = false
+			case TypeDone:
+				en.Done = true
+				en.DisplayAt = e.OccurredAt
+				en.DoneNote = e.TLDR
+			case TypeTriage:
+				en.Verdict = e.Verdict
+			case TypeMerge:
+				if i == 0 {
+					en.TLDR = e.TLDR
+					en.Pinned = en.Pinned || Human(e.Source)
+					for _, other := range e.Targets[1:] {
+						en.Provenance = combineProvenance(en.Provenance, out[other.ID].Provenance)
+						en.Refs = unique(append(append([]string{}, en.Refs...), out[other.ID].Refs...))
+						en.Contributors = append(en.Contributors, out[other.ID].Contributors...)
+					}
+				} else {
+					en.MergedInto = e.Targets[0].ID
+				}
+			}
+			if e.Provenance != nil {
+				en.Provenance = combineProvenance(en.Provenance, e.Provenance)
+			}
+			out[t.ID] = en
+		}
 	}
-	if trackerIDRe.MatchString(ref) {
-		return "linear:" + ref, nil
+	return out
+}
+func combineProvenance(a, b *Provenance) *Provenance {
+	if b == nil {
+		return a
 	}
-	if schemeRe.MatchString(ref) {
-		return ref, nil
+	if a == nil {
+		return b
 	}
-	return "", fmt.Errorf("invalid ref %q: use scheme-qualified form (gh:pr:owner/repo#142, linear:ABC-123, jira:PROJ-45) or #N inside a repo", ref)
+	c := *b
+	c.Candidates = unique(append(append([]string{}, a.Candidates...), b.Candidates...))
+	c.Evidence = unique(append(append([]string{}, a.Evidence...), b.Evidence...))
+	c.Sources = unique(append(append([]string{}, a.Sources...), b.Sources...))
+	return &c
+}
+func unique(xs []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// CheckTargets must run under the store lock, immediately before append.
+func CheckTargets(e Event, current map[string]Entry) error {
+	for _, t := range e.Targets {
+		en, ok := current[t.ID]
+		if !ok || en.Revision != t.Revision {
+			return fmt.Errorf("stale or unknown target %s revision %d", t.ID, t.Revision)
+		}
+		if en.MergedInto != "" {
+			return fmt.Errorf("target merged into %s", en.MergedInto)
+		}
+		if !Human(e.Source) && (Human(en.Source) || en.Pinned || en.Dismissed || en.Type == TypeTodo) {
+			return fmt.Errorf("target %s is human-protected", t.ID)
+		}
+		if (e.Type == TypeDone || e.Type == TypeTriage) && en.Type != TypeTodo {
+			return fmt.Errorf("only todos have lifecycle operations")
+		}
+		if e.Type == TypeDone && (en.Done || en.Verdict == VerdictDeclined || (!Human(en.Source) && en.Verdict != VerdictAccepted)) {
+			return fmt.Errorf("todo must be adopted and open before completion")
+		}
+		if (e.Type == TypeAmend || e.Type == TypeMerge || e.Type == TypeDismiss || e.Type == TypeRestore) && !Narrative(en.Type) {
+			return fmt.Errorf("narrative correction requires narrative targets")
+		}
+	}
+	if e.Type == TypeMerge {
+		base := current[e.Targets[0].ID]
+		for _, t := range e.Targets[1:] {
+			other := current[t.ID]
+			if !SameProject(base.Context, other.Context) || !SameDay(base.DisplayAt, other.DisplayAt) {
+				return fmt.Errorf("merge requires same repository and occurrence day")
+			}
+		}
+	}
+	return nil
 }

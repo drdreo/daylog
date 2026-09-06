@@ -1,236 +1,105 @@
-# Daylog — Architecture Document
+# Athena — daylog's gatekeeping subsystem
 
-**Status:** v1.3 (Phases 1–2 & Omarchy widget implemented; Phase 3 deferred) · **Date:** 2026-08-23
-**Problem:** A single developer runs multiple independent coding agents (Claude Code, Codex, pi) across multiple machines. Work fragments into parallel sessions, side quests, and ~16 open PRs. There is no single place that answers "what actually happened today, and what needs me?"
+**Contract:** store/event/view v2; Athena policy `athena-v2.1`. See the [implementation plan](docs/gatekeeper-plan.md), [usage](README.md), and [native contracts](integrations/README.md). The original direct-agent architecture has been replaced; no legacy reader, publisher, migration, or synchronization protocol is supported.
 
----
+## Ownership and boundaries
 
-> **Next implementation:** [Gatekeeper architecture and plan](docs/gatekeeper-plan.md).
-> The selected direction is a clean-break, report-first system with a separate
-> pi/Luna editor, not stricter reporting instructions or reminder hooks. No
-> backward compatibility is required: that plan supersedes the producer,
-> schema, CLI, and consumer constraints below. This document retains the
-> original design for context; the gatekeeper is not implemented yet.
-> See the [research audit](docs/automatic-logging-research.md) for limitations of
-> the current implementation, including concurrency and correction semantics.
+**Athena names the subsystem, not the AI model.** `internal/athena` owns the curation worker, policy/decision validation, durable plans, retries, and publication coordination. It uses `internal/capture` for intake/receipts and `internal/store` for the shared append-only ledger. Its pi runner reuses an existing configured harness/model; that runner is one replaceable component within Athena. `daylog curate --once` is the action that runs Athena.
 
-## 1. Goals and non-goals
+```text
+agent add / approved hooks / bounded recovery
+                  │
+        Go capture-time context + immutable candidate
+                  │
+       private atomic-file spool + processing receipts
+                  │
+       one OS-locked worker, related bounded batches
+                  │
+       isolated ephemeral pi process (no tools/resources)
+                  │
+       strict decisions → persisted complete Go plan
+                  │
+       shared store lock → revision/protection check → AppendOnce
+                  │
+       append-only events → effective entries → daily view
+                  │
+           terminal / three widgets
 
-Daylog keeps the human in the loop by collecting a short, structured trail of what every agent (and the human) did, enriching it with live status from external systems, and rendering it as one daily view. It must remain useful when everything else fails: no network, no daemon, no UI — the raw files must still tell the story of the day.
-
-Explicit non-goals: Daylog does not orchestrate, schedule, or manage agents (they stay independent), it does not replace the issue tracker or GitHub as the system of record for tasks and code, and it is not a metrics or surveillance product. It is a personal ledger, optimized for one human's end-of-day comprehension.
-
-## 2. Design principles
-
-**Events are the source of truth; everything else is derived.** The system is a small event-sourcing design. Producers append immutable events; state (open todos, current classification of an entry, today's summary) is computed by folding over events at read time. Nothing ever mutates history — corrections are new events pointing at old ones.
-
-**One write path.** No producer writes storage files directly. Everything goes through the `daylog` CLI, which owns the schema, validation, timestamps, ID generation, and context capture. Agents, pollers, Slack bridges, and the human are all just callers of the same command. This is the single most important extensibility decision: adding an integration never means teaching a new component how the storage works.
-
-**Producers are plural and dumb; consumers are plural and dumb.** Both sides of the store are replaceable. A new producer (a Linear poller, a Slack bridge) and a new consumer (an Omarchy widget, an end-of-day summarizer) can each be added without touching anything else.
-
-**Local-first.** Every machine has a full, immediately usable copy of the data. Sync is replication of immutable events between peers, not a client-server dependency. The system degrades gracefully: offline machines keep logging; sync catches up later.
-
-**Boring formats.** Newline-delimited JSON on disk, one file per day, readable with `cat` and `jq`. Human-readable markdown is a rendered view, regenerable at any time, never the source of truth.
-
-## 3. System overview
-
-```
-┌────────────────────────── Producers ──────────────────────────┐
-│  Agents (claude/codex/pi)   Human (CLI, Slack)   Pollers      │
-│                                                  (gh, linear) │
-└──────────────┬────────────────────┬──────────────────┬────────┘
-               ▼                    ▼                  ▼
-        ┌──────────────────────────────────────────────────┐
-        │              daylog CLI  (single write path)     │
-        │  validate · timestamp · id · capture context     │
-        └───────────────────────┬──────────────────────────┘
-                                ▼
-        ┌──────────────────────────────────────────────────┐
-        │  Event store: <data>/events/YYYY-MM-DD.jsonl     │
-        │  Sidecar snapshots: <data>/state/*.json          │
-        └───────────────────────┬──────────────────────────┘
-                    (sync layer replicates events            
-                     between machines, §8)                   
-                                ▼
-        ┌──────────────────────────────────────────────────┐
-        │  Derived state: fold(events) + join(snapshots)   │
-        │  exposed as `daylog today --json`                │
-        └───────────────────────┬──────────────────────────┘
-               ▼                ▼                  ▼
-        Omarchy widget    `daylog today`    EOD summarizer
+human notes/todos/corrections ────────► same locked event writer
+GitHub poller ─► disposable PR snapshot ─► separate view collection
 ```
 
-`<data>` is the platform's per-user data directory — `$XDG_DATA_HOME/daylog` (Linux, default `~/.local/share/daylog`), `~/Library/Application Support/daylog` (macOS), `%AppData%\daylog` (Windows) — overridable with `$DAYLOG_DIR`, so the layout is cross-platform by construction.
+Working agents report facts and uncertainty, not journal materiality. Athena manages relevance, supported wording, grouping, proposed corrections, skips, and holds. Its model has no tools, queue authority, obligation lifecycle controls, or timestamp/identity authority. Athena's Go code owns metadata, validation, decision persistence, and replay through the shared ledger. Human source strings are an accident-prevention convention, not same-user authentication.
 
-## 4. Data model
+## Store layout
 
-### 4.1 Event schema
-
-Every event is one JSON object on one line. The schema is deliberately small, with two designated extension points (`refs` and `meta`):
-
-```json
-{
-  "id": "01J5X7K3...",
-  "ts": "2026-08-23T14:32:05+02:00",
-  "host": "arch-desktop",
-  "source": "agent:claude",
-  "type": "work",
-  "tldr": "Fixed token refresh race condition, opened PR",
-  "refs": ["gh:pr:owner/repo#142"],
-  "ctx": { "repo": "owner/repo", "branch": "auth-refactor", "cwd": "~/src/repo" },
-  "parent": null,
-  "meta": {}
-}
+```text
+<data>/store.json                 explicit version/protocol marker
+       config.json                optional typed machine configuration
+       installation.json          owned resources/commands for reversible setup
+       store.lock                 OS-backed shared ledger lock
+       events/YYYY-MM-DD.jsonl    canonical immutable history
+       state/gh-prs.json           disposable GitHub current state
+       capture/candidates/        immutable normalized revisions
+               evidence/          separately retained bounded claim excerpts
+               receipts/          operational state/disposition/acknowledgments
+               plans/             validated decisions, operation IDs, exact input hash
+               cursors/           native offsets, ancestry, original context, health
+               preferences.json   private bounded examples
+               budget.json        daily invocation accounting
+               worker.lock        single Athena worker, independent of enqueue
+               intake.lock        short atomic intake/retry guard
 ```
 
-Field semantics: `id` is a ULID — lexically sortable by creation time and globally unique without coordination, which is what makes multi-machine merge trivial (§8). `host` records the originating machine. `source` is a namespaced producer identity (`agent:claude`, `agent:codex`, `human:cli`, `human:slack`, `poller:gh`, `poller:linear`); consumers can filter or group on the namespace without knowing the full list of producers. `type` is the event kind (§4.2). `refs` is a list of typed URIs linking the event to external objects. `ctx` is auto-captured by the CLI, never supplied by the caller. `parent` points at an earlier event's `id` for corrections and closures. `meta` is a free-form object for producer-specific payload that the core schema doesn't model.
+Initialization is serialized by an adjacent `<data>.init.lock`. An unversioned nonempty directory or unsupported marker is refused without changing its contents. Initialization writes a marker before optional directories so an interrupted accepted initialization is resumable. Private files are mode 0600 and owned directories 0700 on Unix; Windows uses a protected current-user/SYSTEM DACL. Existing unrelated parent directory permissions are not changed.
 
-### 4.2 Event types
+Atomic replacement writes a private temporary file, checks complete write, syncs, closes, installs atomically, and applies directory durability. New Unix directories sync their parents. Windows uses `MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH)` for installation. Portable locks use `gofrs/flock`/OS locking and release on process death, not a stale PID convention. **Only macOS runtime behavior has been exercised here; Windows/Linux builds are not durability validation.** Local filesystems only; no network-filesystem or distributed exactly-once guarantee.
 
-The core vocabulary: `work`, `sidequest`, and `note` record activity; `todo` opens an obligation; `done` (with `parent`) closes one; `reclassify` (with `parent` and a new type in `meta.to`) reinterprets an earlier entry — this is how a side quest gets promoted to real work without editing history; `transition` records an externally observed state change that clears the narrative bar (for example, an issue moved into a human-owned escalation state), emitted only by pollers. Unknown types must be tolerated by all consumers (rendered generically, never crashed on), so a new producer can introduce a type before every consumer learns about it.
+## Contracts
 
-### 4.3 Typed refs
+`internal/event` defines explicit event/entry, repository/context, target revision, and provenance types. Unsupported kinds/versions and invalid refs fail. Corrective events carry explicit target IDs/revisions; narrative and todo lifecycle events have required occurrence and recording timestamps. Local sequence numbers are assigned under the ledger lock, avoiding clock-skew ordering of corrections. Files partition on `recorded_at`; the folded `display_at` uses occurrence time and its captured offset, or the completion event for closed todos. `filed_at` remains available. Bookkeeping never appears as another accomplishment.
 
-Refs are URIs with a scheme, not bare strings: `gh:pr:owner/repo#142`, `linear:ABC-123`, `jira:PROJ-45`, `slack:C0123/p16929...`. This is the second extension point. They correlate narrative entries with external objects without injecting those objects' changing live status into the log. Poller snapshots remain separate collections in the day view. The CLI normalizes shorthand (`#142` in a repo context becomes the full `gh:pr:` ref using captured `ctx.repo`).
+`internal/capture` separates immutable candidates from atomic receipts:
 
-### 4.4 Snapshots
+- Candidate: source, kind, report/claim, typed refs, captured occurrence/time basis, original context, native identity/revision, episode, evidence IDs, terminal/completeness markers, origin.
+- Receipt: `pending|processing|processed|error`, independently `skip|hold|outcome`, input hash, evidence IDs, model/policy, plan, reason, attempts/backoff, applied IDs.
+- Model output has no event/publication IDs, dates, source-authority fields, or arbitrary metadata. Go constructs those from cited inputs.
 
-Machine-scoped settings live in `<data>/config.json`, alongside the snapshots and under the same non-sync rule: flags configure a run, environment variables configure a shell, and the file configures the machine — which is the only one of the three that a GUI-launched widget button or a scheduled job inherits. Pollers maintain sidecar files under `<data>/state/` — `gh-prs.json`, later `linear-issues.json` — each an atomic-rename-replaced document containing the current truth for its domain plus a `fetched_at` timestamp. Snapshots are per-machine caches of external state: they are *not* synced (each machine can poll for itself, or one machine's staleness marker makes the situation honest), and they are *not* events. The event store holds the narrative; snapshots hold the now.
+Unkeyed CLI reports remain independent. Stable request keys reject conflicting text/type/refs. Native revisions deduplicate hooks and reconciliation where identities align. New native content is a new candidate. A copied pi node uses original cwd/node/time/revision identity, so copied ancestry is not newly captured evidence. Exact explicit task identity or native session/request linkage defines an episode; repository/session alone does not. Repository/refs/recent time retrieve hints, not automatic cross-task merges. Unknown repository identities match only a known identical worktree/cwd, never each other merely because both are empty.
 
-## 5. The write path: `daylog` CLI
+## Athena's curation and replay protocol
 
-The CLI is the system's contract. Core commands:
+1. Acquire worker lock. Recover saved ready live plans only in live mode; finalize shadow receipts without publishing. A `--shadow` run cannot resume a live plan's remaining operations.
+2. Reclaim interrupted processing claims without a persisted plan. Persist a new claim identity before model execution; a completed plan is matched to that exact claim, not just matching text.
+3. Select quiet/max-wait bounded episodes. Held/skipped material is reconsidered only with new same-episode evidence or explicit human retry. Include relevant active, pinned, dismissed and merged outcomes and bounded preference examples.
+4. Check captured-project cloud approval. Reserve the invocation budget durably before calling pi. Model failures use bounded attempt/backoff receipts; they never enable another publisher.
+5. Parse authoritative final assistant `message_end` from pi JSON events; reject failed/incomplete/tool-using streams, oversized data, trailing prose, duplicate/unknown JSON fields, invented candidates/evidence/refs, conflicting actions, invalid targets, and human-protected edits. Every input must be accounted for; one report may support several distinct outcomes.
+6. Go assigns stable plan/operation/publication IDs and preserves primary reporter plus all contributor sources. Validate the complete plan before durable installation. Later-day milestones cannot amend yesterday's outcome.
+7. Under the shared store lock, scan the ledger without ignoring corruption; find an existing publication key **before** checking stale revisions; otherwise check current targets/protections, append completely, sync, and release. Acknowledgment follows append. A crash in that gap finds the existing event on replay; a mid-plan crash resumes remaining operations.
+8. A stale target conflict persists a stopped/error plan. Applied operations are neither duplicated nor undone. Explicit retry requests new bounded evaluation against current state. Shadow decisions are not a deferred automatic publication queue.
 
-```
-daylog add [--type work|sidequest|note|todo] [--ref REF]... "TLDR text"
-daylog done <id|fuzzy-match>
-daylog reclassify <id> <new-type>
-daylog today [--json] [--type ...] [--source ...]
-daylog render [DATE]          # emit the markdown view
-daylog poll gh                # run a poller once (same path the timer uses)
-daylog sync                   # push/pull events (§8)
-```
+Human amendments pin wording, dismissal persists until human restoration, and merging is one event affecting all targets. Automated corrections cannot modify obligations or human entries. Exact already-protected candidate input cannot be republished by a forced replay. This protects mechanical replay, not an assertion that paraphrased independent reports can never be semantically duplicated.
 
-On `add`, the CLI generates the ULID and timestamp, reads `$DAYLOG_SOURCE` (each agent's environment sets its identity once, e.g. `agent:claude`), captures cwd/repo/branch, normalizes refs, validates, and appends one line with `O_APPEND` — which on Linux is atomic for writes of this size, so concurrent agents need no locking. Exit codes are meaningful and the failure mode is loud to the caller but never corrupting to the store: a malformed call is rejected before anything touches disk.
+The append/dedup scan refuses malformed complete/middle records, duplicate keys/IDs/sequences, and torn tails. Read views currently fail explicitly rather than silently omit history. `repair-tail --confirm` backs up all original bytes and removes only an unterminated final record; it does not auto-repair middle records.
 
-The CLI enforces a 280-character limit on `tldr` at write time, rejecting (not truncating) oversized entries so the caller rewrites rather than silently losing the tail. Prompt-level requests keep agents honest most of the time; validation at the single write path keeps them honest all of the time.
+## pi isolation
 
-### 5.1 The canonical agent instruction
+`internal/athena.PiRunner` invokes an argument vector, never shell-built evidence. It uses explicit provider/model/system policy, empty append policy, JSON/print mode, no session, tools, skills, extensions, themes, prompt templates, context discovery, project trust or startup network operations. Global `APPEND_SYSTEM.md` needs its own explicit override: `--no-context-files` alone is insufficient.
 
-One markdown block, written once and pasted verbatim into each agent's global config — `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex, pi's equivalent. Agent identity is deliberately *not* in the prompt: each harness's launch wrapper sets `DAYLOG_SOURCE=agent:<name>` once, so `source` is correct by construction rather than by agent self-report.
+An isolated private agent directory supplies bounded catalog copies and worker-only settings (no retries or compaction). The installed pi auth command performs refresh under its own normal credential lock; only the resulting credential is used in the worker-private auth file, without copying an OAuth refresh token. Symlinking `auth.json` would create a different lexical pi lock and race the real harness, so it is deliberately avoided. Secrets are not passed on argv, printed in errors, or included in plans. Private temporary files are removed on normal exit; OS-level crashes may leave private temporary directories requiring inspection/cleanup.
 
-The instruction is written around a materiality bar rather than a completion trigger. "Log when you finish a task" is the obvious phrasing and the wrong one: an agent finishes a dozen things an hour, most of them questions answered and files read, and a log that records all of them is one nobody opens. The bar is what the task *left behind* — a merge, a diagnosis, a conclusion, a changed system — and the tie-break is explicit: when it is borderline, do not log. A missing entry costs nothing, because the day view is a summary and never claimed to be an audit trail.
+Provider/model never silently falls back. `runner.binary`, `runner.agent_dir`, `runner.path`, input/output limits, timeout, attempt limits, and call budgets are persisted machine settings. No private data is sent by `add`, `today`, build, default tests, or installation. Shadow calls still submit approved evidence; shadow is not an offline mode.
 
-```markdown
-## Work logging (daylog)
+## Capture and privacy
 
-When a task leaves something behind — code, documentation, or product
-behavior materially changed; a bug diagnosed or fixed; research or a review
-reached a conclusion; infrastructure, schema, or data changed — run:
+Adapters inspect verified terminal payloads and enqueue neutral JSON, not journal entries. SessionStart captures original git context while available. Native recovery consumes approved regular JSONL files incrementally, rotating a capped file list and preserving incomplete trailing bytes for a later wakeup. Unsupported versions, rewrites, missing metadata, scope failures and bound exhaustion appear in cursor health. It never follows arbitrary transcript-provided paths or reconstructs context from the worker cwd.
 
-    daylog add --type <work|sidequest> "one-line TLDR, ≤280 chars"
+Native supporting excerpts are explicitly assistant **claims**, not execution proof. No hidden reasoning, raw tool streams, credentials files, `.env` reads, repository crawling or model-directed evidence gathering. Sensitive-line redaction is deliberately described as best-effort. Native-boundary candidate text is compact; sensitive excerpt text is separately retained, including its bounded copied Athena-plan input. `prune` redacts/removes only aged evidence whose every referencing candidate is processed and whose plans cannot still apply. Receipts, hashes and report text remain for identity/diagnostics. Missing pruned evidence is visible on a requested retry.
 
-If you notice something actionable that you are NOT doing, file it for
-the human to review:
+Scheduled recovery and cloud submission require separate explicit scope lists. The data directory and internally tagged Athena process are excluded; the daylog source repository is not. Native session existence is not proof of task boundaries or full capture. Unrecorded hard crashes, some reference-based Codex histories, unsupported Claude metadata shapes, and unknown child lineage are honest coverage gaps.
 
-    daylog add --type todo "concrete action, for human review"
+## Validation and cutover
 
-- Add `--ref '#142'` (or a Linear/Jira id) for any PR or issue involved.
-- `work` = the task you were asked to do; `sidequest` = anything you did
-  that wasn't the original ask. When unsure, use `sidequest`.
-- Do NOT log: questions answered, code explained or read, trivial edits,
-  progress updates, routine failures or retries, or work whose only artifact
-  is the conversation. When it is borderline, do not log — a log full of
-  noise stops being read.
-- Do NOT log PR lifecycle, review state, links, or CI/check results. The
-  GitHub poller already owns those. A PR or issue may be a `--ref`, but the
-  entry must describe the underlying work or conclusion, not its PR status.
-- A failure or blocker is not itself an outcome. Log only a durable diagnosis
-  or decision produced by investigating it, and name that result rather than
-  the failed PR, check, command, or attempt.
-- Todos go to the human's review queue. Do not act on them, track them,
-  or file them for yourself — filing one ends your involvement with it.
-  Triage (`accept`/`decline`) is the human's alone.
-- One entry per completed task. Never write to daylog's data files directly.
-```
+Tests use fake runner/clock seams, sanitized native/golden fixtures, real concurrent CLI processes, killed-worker replay, corruption/repair, mid-plan failure, stale human edits, retention, scratch resource installation, and a mock pi API. Three widget timestamp fields change in the same contract. No live inference is required; the synthetic Luna smoke test is opt-in.
 
-The `note` type remains in the schema for human quick-capture and the EOD summarizer, but is intentionally excluded from the agent vocabulary to keep agent noise out of the log. Where a harness supports deterministic hooks (Claude Code's Stop hook), a backstop checks that a task entry was logged and reminds the agent if not — reminding rather than auto-generating, because an auto-generated TLDR ("edited 3 files") defeats the purpose of delegating the summarization.
-
-### 5.2 Agent todos are proposals
-
-Agent-filed todos are proposals, not commitments — but they are still todos, and they live in the same list as your own. Splitting them into a second "inbox" bucket bought noise isolation at the price of a second list to work from, and of every consumer rendering the same todo twice; `open_todos` now holds every open todo and `needs_triage` *filters* it down to the agent-filed ones still awaiting a verdict.
-
-Triage is a `triage` event carrying `meta.verdict`, and it is the human's call — the CLI rejects a verdict from an `agent:*` source, or a self-approving agent would make the queue ceremonial:
-
-- **accept** (`daylog accept <id>`) — adopt it as yours. The type is unchanged and it stays in `open_todos`; accepting only clears the awaiting-triage flag so the widget stops nagging.
-- **decline** (`daylog decline <id> --note "why"`) — reject it. The event stays in the ledger, but the todo drops out of every rendered view: it was never yours to carry.
-
-A todo is an obligation until it is closed, and only then a record of something that happened — so a closed todo enters the work log on the day it was *closed*, not the day it was filed. That is also the only placement under which a todo carried across days stays visible: filed under its creation day it would drop out of every view the moment it left `open_todos`. The fold keeps both moments (`ts` filed, `done_ts` closed) rather than collapsing them, because "finished at 17:40, carried since Tuesday" is the whole point of having tracked it.
-
-Both are append-only, so the last verdict wins and a decline is reversible by a later accept. Proposals left untriaged are surfaced prominently — an ignored review queue silently recreates the lost-context problem the system exists to solve.
-
-## 6. Producers
-
-**Agents** are pure CLI callers as described above. No SDK, no library, no per-agent code.
-
-**The human** logs via the same CLI (`daylog add "lunch idea: cache the embeddings"`), and later via Slack (§7.2). Reclassification and todo-closure are human-only operations in practice, though nothing enforces that.
-
-**Pollers** refresh machine-local snapshots of external state. A scheduled `daylog poll <name>` fetches the complete current picture and replaces its snapshot atomically; a failed or partial fetch keeps the previous snapshot with its honest `fetched_at`, and no network exits 0. Snapshot state does not automatically belong in the narrative. GitHub is intentionally snapshot-only: PR lifecycle, checks, and review state live in the separate Open PR collection, while agents log the underlying work outcome. A future integration may emit a `transition` only when the external change itself is durable context rather than workflow metadata (for example, an issue moved into a human-owned escalation state). Pollers may also be scoped per machine — the GitHub poller takes an owner filter (`--owner`, `$DAYLOG_GH_OWNERS`, or `gh_owners` in `<data>/config.json`, in that precedence) because one machine is rarely one context, and a work laptop should not narrate the side project's PRs. New integrations are new pollers; the core never changes. Pollers shell out to the provider's own CLI where one exists (`gh api` for GitHub) rather than speaking HTTP natively: auth comes for free from the tool the machine already uses, and the failure modes stay honest — `gh` absent or unauthenticated means keep the stale snapshot. The daylog binary itself stays dependency-free for everything except polling.
-
-## 7. Planned integrations
-
-### 7.1 Issue trackers (Linear, Jira)
-
-An issue-tracker poller is structurally identical to the GitHub poller: snapshot of your assigned/active issues into `linear-issues.json`, transitions for state changes worth narrating. Two integration touch points come for free from the data model: agents can `--ref linear:ABC-123` when a task originates from an issue, and the rendered day view groups entries under the issues they reference — turning "16 disconnected log lines" into "3 issues progressed, 2 side quests." Recommended sequencing: build this only after the GitHub poller has been running for a couple of weeks, so the poller pattern is proven before it's duplicated.
-
-### 7.2 Slack quick-note
-
-Slack is an *inbound producer*, not a consumer integration: the goal is capturing thoughts from your phone or from a work conversation into today's log. The simplest robust design is a tiny bridge (a slash command `/daylog note ...` or a dedicated DM channel watched by a small bot) that translates messages into `daylog add --source human:slack` calls on a machine you control. Because events carry `source` and sync merges by union (§8), it doesn't matter which machine the bridge runs on. A later, optional outbound direction — the EOD summary posted to a private Slack channel — is just another consumer and needs no new architecture.
-
-### 7.3 End-of-day summarizer
-
-A scheduled agent invocation (any of the three agents can do it) that reads `daylog today --json`, writes a narrative summary, and appends it as a `note` event with `source: agent:<name>` and `meta.kind: eod-summary`. This closes the loop elegantly: the summarizer is simultaneously a consumer and a producer, using only the two public interfaces.
-
-## 8. Multi-machine sync
-
-The append-only, immutable-event design was chosen partly because it makes sync nearly trivial. Since events are never edited, never deleted, and carry globally unique ULIDs, **merging two machines' logs is a set union**: collect all events for a day from all machines, dedupe by `id`, sort by ULID. There are no conflicts by construction — the classic sync problem (two machines edited the same thing) cannot occur, because nothing is ever edited. Two machines *reclassifying* the same entry produces two `reclassify` events, and the fold resolves it deterministically (last ULID wins), with both opinions preserved in history.
-
-Events are stored in a single per-day file (`events/2026-08-23.jsonl`) — one source of truth per day; the originating machine is recorded in-band by each event's `host` field, not in the filename. Two machines writing the same day therefore produce diverging copies of one file, and `daylog sync` resolves that with the same union: concatenate both versions, dedupe by `id`, sort by ULID, rewrite (with git as the transport, a `union`-style merge driver amounts to the same thing). Derived state and rendered markdown are never synced — each machine recomputes them locally. Snapshots are never synced either (§4.4).
-
-Three transport options, in recommended order:
-
-**Git (recommended start).** `<data>/events` is a git repo; `daylog sync` commits and pushes/pulls against a private remote (GitHub private repo, or self-hosted). Same-day writes from two machines merge by the id-union rule above, configured once as a git merge driver. This costs nothing, gives free history/backup/audit, works through any firewall you already work through, and is inspectable with tools you already know. Its only weakness is latency — sync happens when triggered (post-add hook, timer, or manual), not instantly.
-
-**Syncthing.** Continuous peer-to-peer replication of the events directory, no cloud party involved. Good fit if the machines are often on the same network and you want near-real-time cross-desktop views. Slightly riskier around partial-file propagation; mitigated by line-oriented parsing that skips a torn final line (though with a shared per-day file, Syncthing's last-writer-wins conflict copies need the same id-union reconciliation).
-
-**Object storage (S3/R2).** Each host pushes its own day-files to a bucket; readers pull all hosts' files. Cleanest for a future phone/web consumer, but introduces credentials and a cloud dependency for what is otherwise a local-first system. Defer until an actual remote consumer exists.
-
-The sync layer is deliberately a dumb file-replication concern *underneath* the store, invisible to producers and consumers. Switching transports later changes `daylog sync` and nothing else.
-
-## 9. Consumers
-
-All consumers read exactly one interface: `daylog today --json` (and `daylog render` for markdown). The terminal view ships first and validates the schema through real daily use. The bar widgets come second — the Omarchy plugin (a QML bar-widget plugin for Quickshell), its macOS sibling (a SwiftBar/xbar menu bar plugin in dependency-free JXA), and its Windows sibling (a system tray widget in dependency-free PowerShell/WinForms), all shelling out to `daylog today --json` and rendering narrative entries separately from the current PR snapshot; each is by design the *thinnest* component in the system, replaceable in an afternoon, which is exactly why UI was deferred to the end. That all three exist without any knowing about the others is the dumb-consumer principle paying out. Day navigation is the same payout in miniature: because the contract is `daylog today [DATE] --json` rather than a hardcoded today, a widget walks back through earlier days by re-running the read it already runs — the CLI needed nothing, and each widget's day cursor is transient UI state that never touches the store. Only `entries` is day-scoped, so stepping back moves the log alone while `open_todos` and `prs` keep describing now, which is why the attention badge stays truthful on any day. The EOD summarizer (§7.3) and any future phone view are additional consumers with no special privileges.
-
-## 10. Failure modes and trust boundaries
-
-The store survives every component failing: a crashed agent leaves at most a missing line; a crashed poller leaves a stale-but-honest snapshot; a dead sync remote leaves fully functional local machines. The one systemic risk is schema drift between producers and consumers, contained by three rules — consumers tolerate unknown `type` and `source` values, the CLI is the only component that validates on write, and schema changes are additive only (new fields, never repurposed ones), with a `v` field addable later if a breaking change ever becomes unavoidable.
-
-Trust: everything runs as your user on your machines; agents can only call the CLI, which validates input, so a confused agent cannot corrupt the store — worst case is a garbage TLDR, which is visible and correctable via `reclassify`. The Slack bridge is the only component exposed to input from outside the machine and should treat message text strictly as opaque payload for `tldr`, never as instructions or shell input.
-
-## 11. Build order
-
-Phase 1 — the spine: event schema, `daylog add/today/render`, agent instructions in all three agents' configs. Live on it for a week; this validates the schema before anything is built on top.
-
-Phase 2 — GitHub poller: current-state snapshot, systemd user timer, separate Open PR collection in the `today` view. This is where the "16 PRs" problem is actually solved.
-
-Phase 3 — sync: git transport, id-union merge driver, `daylog sync` with a timer and/or post-add hook. Second machine joins. *(Deferred by decision: single-machine use is the reality today; revisit when a second machine actually joins.)*
-
-Phase 4 — surfaces: Omarchy widget (implemented in `omarchy-plugin/`, a Quickshell bar-widget plugin for Omarchy 4 that reads `daylog today --json`), macOS menu bar widget (implemented in `swiftbar-plugin/`, a SwiftBar plugin reading the same contract), Windows 11 tray widget (implemented in `windows-plugin/`, a PowerShell/WinForms tray widget reading the same contract), EOD summarizer.
-
-Phase 5 — integrations as demand proves out: Linear/Jira poller (clone of the gh poller), Slack inbound bridge.
-
-Each phase is independently useful, and no phase requires rework of a previous one — that property falls directly out of the single-write-path and dumb-consumer principles.
-
-## 12. Open questions
-
-Whether `todo` events deserve due-dates and priorities or stay deliberately flat (recommend flat until proven insufficient). Retention: whether to ever compact old days into monthly summaries, or keep everything forever (JSONL of one-line TLDRs is small enough that forever is plausible). And identity for the Slack bridge: slash command (simpler, requires a public endpoint or Slack app) versus bot-watched DM channel (simpler auth, slightly clunkier UX).
+Installation, scheduler activation, real shadow evaluation and live cutover are not side effects of implementation. Pause by stopping the worker or selecting shadow; keep intake durable. Do not roll an old binary/schema back into this active store, import old records, or reset it destructively.

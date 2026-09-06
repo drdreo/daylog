@@ -1,10 +1,12 @@
-# Daylog gatekeeper: architecture and implementation plan
+# Athena (daylog gatekeeping): architecture and implementation plan
 
-- **Status:** selected direction; implementation not started.
+**Naming:** Athena is the gatekeeping subsystem/module (`internal/athena`), not the model or a persona. References to the editor below describe its model-assisted curation component. `daylog curate` remains the action verb.
+
+- **Status:** v2 implementation through checkpoint 7 is present. Checkpoint 8 remains an explicit human opt-in. The configured-model smoke/quality evaluation, live harness runs, and Windows/Linux runtime validation have **not** been performed.
 - **Date:** 2026-09-06
 - **Delivery:** one cohesive implementation pass, in the ordered checkpoints below. No PR stack or mandatory week-long rollout. Installation and live publication remain explicit actions.
 
-This is the actionable successor to the [automatic-logging research](automatic-logging-research.md). It changes the first build from hook-first extraction to **report-first editorial control**. The research remains useful background; this document wins on implementation scope and order. The existing [architecture](../ARCHITECTURE.md) describes the original system, not an already-enabled gatekeeper.
+This is the actionable successor to the [automatic-logging research](automatic-logging-research.md). It changes the first build from hook-first extraction to **report-first editorial control**. The research remains useful background; this document wins on implementation scope and order. The [architecture](../ARCHITECTURE.md) now documents the implemented v2 system and its verification limits; implementation does not enable live publication.
 
 ## 1. Decision
 
@@ -52,7 +54,7 @@ Hooks are not a second publisher. They supply evidence to the same editor when r
 
 ## 3. CLI behavior and operating modes
 
-All commands, flags, settings, and schemas below describe the proposed new contract, not an implemented interface or a promise to preserve the old one.
+The commands below describe the selected v2 contract. See [README](../README.md) for implemented setup and operational instructions; no old interface is preserved.
 
 Use a simple reporting interface:
 
@@ -145,7 +147,7 @@ Editorial disposition: `skip`, `hold`, or association with one or more published
 - `skip` is successful processing, not a retryable error.
 - `hold` waits for new evidence or an explicit retry; it is not re-summarized every minute.
 - New evidence in a known episode can reopen its held/skipped material; unrelated arrivals cannot.
-- A policy change is an explicit bounded replay, not an automatic paid reprocessing of every historical session.
+- A policy change is an explicit bounded replay, not an automatic model-driven reprocessing of every historical session.
 - Prune sensitive evidence only after processing and the configured retention window; do not silently expire pending work. Keep compact receipts/tombstones for retry safety. An explicit privacy purge may discard pending work, but must record that it was discarded rather than published.
 
 ### D. Publish persisted decisions, safely
@@ -230,20 +232,20 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 1. Define contracts and fixtures
 
-- [ ] Define one clean event/view contract plus candidate, receipt, editor-plan/action, provenance, correction, and config schemas with explicit versions. Remove old schema and timestamp constraints.
-- [ ] Add typed gatekeeper settings (`shadow` default, `live` opt-in), fresh-store initialization, build/store version reporting, runner configuration, and a fake runner/clock seam.
-- [ ] Keep candidate report size bounded independently of the concise published TLDR; do not force reporters to write publication-ready copy.
-- [ ] Create sanitized golden episodes for keep/skip/hold, duplicate reports, same task across agents, human correction, and unsupported claims.
+- [x] Define one clean event/view contract plus candidate, receipt, editor-plan/action, provenance, correction, and config schemas with explicit versions. Remove old schema and timestamp constraints.
+- [x] Add typed gatekeeper settings (`shadow` default, `live` opt-in), fresh-store initialization, build/store version reporting, runner configuration, and a fake runner/clock seam.
+- [x] Keep candidate report size bounded independently of the concise published TLDR; do not force reporters to write publication-ready copy.
+- [x] Create sanitized golden episodes for keep/skip/hold, duplicate reports, same task across agents, human correction, and unsupported claims.
 
-**Likely paths:** `internal/event/`, `internal/view/`, `internal/capture/`, `internal/curate/`, `internal/config/`, `cmd/version.go`, `testdata/gatekeeper/`.
+**Likely paths:** `internal/event/`, `internal/view/`, `internal/capture/`, `internal/athena/`, `internal/config/`, `cmd/version.go`, `testdata/gatekeeper/`.
 
-**Done when:** the new schemas/settings validate strictly, fresh-store setup is non-destructive, and unsupported formats fail clearly. There is no old config/history test obligation. Confirm available pi flags/model ID without making a paid test call.
+**Done when:** the new schemas/settings validate strictly, fresh-store setup is non-destructive, and unsupported formats fail clearly. There is no old config/history test obligation. Confirm available pi flags/model ID without invoking the model.
 
 ### 2. Build durable intake and queue operations
 
-- [ ] Implement the private atomic-file spool, portable locks, processing receipts, recovery, and idempotent native revisions.
-- [ ] Extract shared original-context capture from `cmd/root.go`; support known session metadata without requiring it.
-- [ ] Add `queue list`, `status`, and queue-facing `doctor` checks. Exercise intake directly before wiring the producer CLI.
+- [x] Implement the private atomic-file spool, portable locks, processing receipts, recovery, and idempotent native revisions.
+- [x] Extract shared original-context capture from `cmd/root.go`; support known session metadata without requiring it.
+- [x] Add `queue list`, `status`, and queue-facing `doctor` checks. Exercise intake directly before wiring the producer CLI.
 
 **Likely paths:** `internal/capture/`, `internal/context/`, `cmd/queue.go`, `cmd/status.go`, `cmd/doctor.go`.
 
@@ -251,9 +253,9 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 3. Make the ledger safe to publish and correct
 
-- [ ] Add shared locking, durable `AppendOnce`, publication-key recovery, corruption diagnostics, and fault-injection tests.
-- [ ] Implement append-only amendment/dismissal/restoration/merge, human protection, and shared effective-target resolution.
-- [ ] Implement the new event/view timestamps and update Markdown/widgets in the same change. Preserve the intended product semantics—todo completion belongs on its completion day, and PR state stays separate—not old field names.
+- [x] Add shared locking, durable `AppendOnce`, publication-key recovery, corruption diagnostics, and fault-injection tests.
+- [x] Implement append-only amendment/dismissal/restoration/merge, human protection, and shared effective-target resolution.
+- [x] Implement the new event/view timestamps and update Markdown/widgets in the same change. Preserve the intended product semantics—todo completion belongs on its completion day, and PR state stays separate—not old field names.
 
 **Likely paths:** `internal/store/`, `internal/event/`, `internal/view/`, `cmd/root.go`, correction commands, all three widget directories.
 
@@ -261,30 +263,30 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 4. Build the one-shot pi/Luna editorial loop
 
-- [ ] Add the isolated pi subprocess runner, bounded JSON-event parser, versioned policy prompt, and strict action validator.
-- [ ] Batch by related episode, include relevant active and suppressed outcomes, persist plans before applying operations, and record skip/hold reasons.
-- [ ] Implement `curate --once`, shadow execution, stale-plan handling, replay, model-error backoff, and `explain`.
+- [x] Add the isolated pi subprocess runner, bounded JSON-event parser, versioned policy prompt, and strict action validator.
+- [x] Batch by related episode, include relevant active and suppressed outcomes, persist plans before applying operations, and record skip/hold reasons.
+- [x] Implement `curate --once`, shadow execution, stale-plan handling, replay, model-error backoff, and `explain`.
 
-**Likely paths:** `internal/curate/`, `cmd/curate.go`, `cmd/explain.go`. Embed the default policy/schema into the binary so the installed worker does not depend on checkout-relative files.
+**Implementation paths:** `internal/athena/`, `cmd/athena.go`. Embed the default policy/schema into the binary so the installed worker does not depend on checkout-relative files.
 
 **Done when:** fake-runner end-to-end tests are deterministic; malformed/hostile output cannot publish arbitrary events; an opt-in sanitized Luna smoke test works without tools or self-capture. This completes the first full vertical slice.
 
 ### 5. Route agent reports and simplify reporting instructions
 
-- [ ] Replace direct agent narrative writes with mandatory queue intake; implement the deliberate human and explicit todo paths.
-- [ ] Make acknowledgements/help text distinguish queued from logged; expose enough metadata for callers to track a report. Do not retain old output aliases or deprecated routing flags.
-- [ ] Replace the canonical skill/instructions with one factual-reporting contract. No mode detection, old relevance rubric, or competing publisher.
-- [ ] Add minimal human correction/preferences persistence and keep pinned/dismissed outcomes in editorial context.
+- [x] Replace direct agent narrative writes with mandatory queue intake; implement the deliberate human and explicit todo paths.
+- [x] Make acknowledgements/help text distinguish queued from logged; expose enough metadata for callers to track a report. Do not retain old output aliases or deprecated routing flags.
+- [x] Replace the canonical skill/instructions with one factual-reporting contract. No mode detection, old relevance rubric, or competing publisher.
+- [x] Add minimal human correction/preferences persistence and keep pinned/dismissed outcomes in editorial context.
 
-**Likely paths:** `cmd/add.go`, `skills/daylog/SKILL.md`, `docs/AGENT_INSTRUCTIONS.md`, `internal/curate/`, command tests.
+**Likely paths:** `cmd/add.go`, `skills/daylog/SKILL.md`, `docs/AGENT_INSTRUCTIONS.md`, `internal/athena/`, command tests.
 
 **Done when:** reports from all three sources use the same queue; agent `note` cannot bypass it; humans/todos keep working; model unavailability never falls back to noisy direct agent publication.
 
 ### 6. Add automatic capture and recovery to the same pipeline
 
-- [ ] Pi adapter first, then Claude and Codex adapters; validate each against versioned native fixtures.
-- [ ] Implement `capture`/`reconcile`, per-source cursors, bounded approved scans, lag/incomplete handling, and report-plus-hook coalescing.
-- [ ] Test skipped reporting, missing hooks, new evidence after skip, copied/forked histories, repeated Stops, known/unknown child lineage, and deleted worktrees.
+- [x] Pi adapter first, then Claude and Codex adapters; validate each against versioned native fixtures.
+- [x] Implement `capture`/`reconcile`, per-source cursors, bounded approved scans, lag/incomplete handling, and report-plus-hook coalescing.
+- [x] Test skipped reporting, missing hooks, new evidence after skip, copied/forked histories, repeated Stops, known/unknown child lineage, and deleted worktrees.
 
 **Likely paths:** `integrations/pi/`, `integrations/claude/`, `integrations/codex/`, `internal/capture/adapters/`, `cmd/capture.go`, `cmd/reconcile.go`.
 
@@ -292,10 +294,10 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 ### 7. Install, schedule, and verify end to end
 
-- [ ] Build fresh install/setup with explicit opt-ins, new-schema config/store initialization, path quoting, trust handling, and reversible adapter/scheduler installation. Preserve unrelated harness settings/hooks; do not add old daylog config migration.
-- [ ] Schedule short `curate --once`/reconciliation runs using launchd here; provide systemd/Windows equivalents without adding a daemon requirement. Persist executable paths and machine settings rather than relying on shell exports.
-- [ ] Complete health reporting: last observed input, queue age, worker/model/parser failures, skipped vs missing work, and source coverage.
-- [ ] Replace obsolete README/architecture instructions, tests, helpers, and compatibility branches rather than layering over them. Run unit, race, integration, cross-process crash, scratch-HOME installer, and supported-platform build checks against the new contract.
+- [x] Build fresh install/setup with explicit opt-ins, new-schema config/store initialization, path quoting, trust handling, and reversible adapter/scheduler installation. Preserve unrelated harness settings/hooks; do not add old daylog config migration.
+- [x] Schedule short `curate --once`/reconciliation runs using launchd here; provide systemd/Windows equivalents without adding a daemon requirement. Persist executable paths and machine settings rather than relying on shell exports.
+- [x] Complete health reporting: last observed input, queue age, worker/model/parser failures, skipped vs missing work, and source coverage.
+- [x] Replace obsolete README/architecture instructions, tests, helpers, and compatibility branches rather than layering over them. Run unit, race, integration, cross-process crash, scratch-HOME installer, and supported-platform build checks against the new contract.
 
 **Likely paths:** `install.sh`, `docs/launchd/`, `docs/systemd/`, Windows setup, `cmd/doctor.go`, README/architecture.
 
@@ -319,4 +321,4 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 - A permanent conversational gatekeeper session; durable context belongs in data, not an ever-growing chat.
 - Rich merge/split UI, weekly recaps, catch-up/resume surfaces, and model cascades. Useful follow-ons, not prerequisites.
 
-**Next implementation action:** start checkpoint 1 with the candidate/action contracts and failure fixtures. Build through checkpoint 7 in one branch/pass if convenient; checkpoint 8 remains an explicit operational cutover, not a side effect of tests or `git merge`.
+**Next operational action:** review the implemented contracts and verification limits, then explicitly approve a sanitized model smoke/shadow evaluation and any desired live installation. Checkpoint 8 is not a side effect of tests or `git merge`. The checkboxes above describe code delivery, not a claim that unrun model/live/platform checks passed.

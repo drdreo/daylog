@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/drdreo/daylog/internal/event"
 	"github.com/drdreo/daylog/internal/snapshot"
 )
 
@@ -11,11 +12,11 @@ func testSnap() *snapshot.GHPRs {
 	return &snapshot.GHPRs{
 		FetchedAt: "2026-08-23T12:00:00Z",
 		PRs: map[string]snapshot.PR{
-			"gh:pr:o/r#7": {Ref: "gh:pr:o/r#7", Repo: "o/r", Number: 7, Title: "Fix races",
+			"gh:pr:github.com/o/r#7": {Ref: "gh:pr:github.com/o/r#7", Repo: "o/r", Number: 7, Title: "Fix races",
 				State: "open", Checks: "failing", Review: "changes_requested"},
-			"gh:pr:o/r#3": {Ref: "gh:pr:o/r#3", Repo: "o/r", Number: 3, Title: "Old one",
+			"gh:pr:github.com/o/r#3": {Ref: "gh:pr:github.com/o/r#3", Repo: "o/r", Number: 3, Title: "Old one",
 				State: "merged", Checks: "passing", Review: "approved"},
-			"gh:pr:a/a#1": {Ref: "gh:pr:a/a#1", Repo: "a/a", Number: 1, Title: "Other repo",
+			"gh:pr:github.com/a/a#1": {Ref: "gh:pr:github.com/a/a#1", Repo: "a/a", Number: 1, Title: "Other repo",
 				State: "open", Checks: "none", Review: "none", Draft: true},
 		},
 	}
@@ -24,19 +25,19 @@ func testSnap() *snapshot.GHPRs {
 func TestJoinGHLeavesNarrativeEntriesAlone(t *testing.T) {
 	d := Day{
 		Entries: []Entry{
-			{ID: "A", Refs: []string{"linear:ABC-1", "gh:pr:o/r#7"}},
-			{ID: "B", Refs: []string{"gh:pr:o/r#999"}}, // not in snapshot
-			{ID: "C", Refs: []string{}},
+			{Event: event.Event{ID: "A", Refs: []string{"linear:ABC-1", "gh:pr:github.com/o/r#7"}}},
+			{Event: event.Event{ID: "B", Refs: []string{"gh:pr:github.com/o/r#999"}}}, // not in snapshot
+			{Event: event.Event{ID: "C", Refs: []string{}}},
 		},
-		OpenTodos:   []Entry{{ID: "T", Refs: []string{"gh:pr:o/r#3"}}},
+		OpenTodos:   []Entry{{Event: event.Event{ID: "T", Refs: []string{"gh:pr:github.com/o/r#3"}}}},
 		NeedsTriage: []Entry{},
 	}
 	JoinGH(&d, testSnap())
 
-	if got := strings.Join(d.Entries[0].Refs, ","); got != "linear:ABC-1,gh:pr:o/r#7" {
+	if got := strings.Join(d.Entries[0].Refs, ","); got != "linear:ABC-1,gh:pr:github.com/o/r#7" {
 		t.Fatalf("entry refs changed: %q", got)
 	}
-	if got := strings.Join(d.OpenTodos[0].Refs, ","); got != "gh:pr:o/r#3" {
+	if got := strings.Join(d.OpenTodos[0].Refs, ","); got != "gh:pr:github.com/o/r#3" {
 		t.Fatalf("todo refs changed: %q", got)
 	}
 	if d.PRsFetchedAt != "2026-08-23T12:00:00Z" {
@@ -50,13 +51,13 @@ func TestJoinGHListsOnlyOpenPRsSorted(t *testing.T) {
 	if len(d.PRs) != 2 {
 		t.Fatalf("prs = %d, want 2 (merged one excluded)", len(d.PRs))
 	}
-	if d.PRs[0].Ref != "gh:pr:a/a#1" || d.PRs[1].Ref != "gh:pr:o/r#7" {
+	if d.PRs[0].Ref != "gh:pr:github.com/a/a#1" || d.PRs[1].Ref != "gh:pr:github.com/o/r#7" {
 		t.Fatalf("order = %s, %s", d.PRs[0].Ref, d.PRs[1].Ref)
 	}
 }
 
 func TestJoinGHNilSnapshotIsNoop(t *testing.T) {
-	d := Day{Entries: []Entry{{ID: "A", Refs: []string{"gh:pr:o/r#7"}}}}
+	d := Day{Entries: []Entry{{Event: event.Event{ID: "A", Refs: []string{"gh:pr:github.com/o/r#7"}}}}}
 	JoinGH(&d, nil)
 	if len(d.PRs) != 0 || d.PRsFetchedAt != "" {
 		t.Fatal("nil snapshot must leave the day untouched")
@@ -86,11 +87,11 @@ func TestMarkdownKeepsPRStatusInItsOwnSection(t *testing.T) {
 	d := Day{
 		Date:        "2026-08-23",
 		GeneratedAt: "2026-08-23T12:30:00Z",
-		Entries: []Entry{{
-			ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", TS: "2026-08-23T09:00:00Z",
+		Entries: []Entry{{DisplayAt: "2026-08-23T09:00:00Z", Event: event.Event{
+			ID:     "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 			Source: "agent:claude", Type: "work", TLDR: "Fixed the race",
-			Refs: []string{"gh:pr:o/r#7"},
-		}},
+			Refs: []string{"gh:pr:github.com/o/r#7"},
+		}}},
 	}
 	JoinGH(&d, testSnap())
 	md := Markdown(d)
@@ -100,10 +101,10 @@ func TestMarkdownKeepsPRStatusInItsOwnSection(t *testing.T) {
 	if !strings.Contains(md, "**o/r#7** Fix races — checks failing · changes requested") {
 		t.Errorf("missing PR line:\n%s", md)
 	}
-	if !strings.Contains(md, "Fixed the race (gh:pr:o/r#7)") {
+	if !strings.Contains(md, "Fixed the race (gh:pr:github.com/o/r#7)") {
 		t.Errorf("missing work entry:\n%s", md)
 	}
-	if strings.Contains(md, "Fixed the race (gh:pr:o/r#7) [") {
+	if strings.Contains(md, "Fixed the race (gh:pr:github.com/o/r#7) [") {
 		t.Errorf("PR status leaked into work entry:\n%s", md)
 	}
 	if strings.Contains(md, "o/r#3") {
