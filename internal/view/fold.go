@@ -24,7 +24,7 @@ type Day struct {
 func Fold(all []event.Event, date, now time.Time) Day {
 	d := Day{Version: event.Version, Date: date.Format("2006-01-02"), GeneratedAt: now.Format(time.RFC3339Nano), Entries: []Entry{}, OpenTodos: []Entry{}, NeedsTriage: []Entry{}, PRs: []snapshot.PR{}}
 	for _, e := range event.Effective(all) {
-		if e.Dismissed || e.MergedInto != "" || e.Verdict == event.VerdictDeclined {
+		if !visibleEntry(e) {
 			continue
 		}
 		if e.Refs == nil {

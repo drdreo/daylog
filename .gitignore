@@ -1,4 +1,6 @@
 daylog
 /dist/
+/macos-app/.build/
+/macos-app/.swiftpm/
 !skills/daylog/
 !skills/daylog/**

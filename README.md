@@ -130,6 +130,7 @@ Pause by stopping the scheduled job or `daylog setup --mode shadow`. Intake cont
 
 ```sh
 daylog today [YYYY-MM-DD] --json
+daylog days [YYYY-MM] --json          # nonempty journal days and entry counts
 daylog render [YYYY-MM-DD]
 daylog status --json
 daylog doctor --check-model          # catalog check, no inference
@@ -138,6 +139,8 @@ daylog repair-tail YYYY-MM-DD --confirm
 ```
 
 Every raw event has `recorded_at` and `occurred_at`; files are partitioned by recording day. The view's required `display_at` drives sorting/display: captured occurrence day for narrative, completion occurrence time for completed todos. `filed_at` preserves the original todo filing time. Amendments do not move work to the correction day. There are no `ts`/`done_ts` compatibility fields.
+
+`days --json` returns `{version: 2, month: "YYYY-MM", days: [{date: "YYYY-MM-DD", count: N}]}` for the requested month (current month by default). It reads an existing store once and counts the same effective entries as `today`: narrative plus completed todos, excluding open obligations, suppressed entries, queue items, and PR snapshots. Dates retain captured display components; amendments do not add a dot on the correction day. Empty months return `days: []`.
 
 Ledger corruption blocks publication, including dedup retries. `repair-tail` only removes an unterminated final line and first saves **all original bytes** beside the day file. Malformed complete/middle records require explicit inspection; no reader silently skips them. Interrupted atomic-file temporaries are diagnostic artifacts, never completed candidates.
 
@@ -150,11 +153,12 @@ daylog poll gh --owner 'myorg,!oldorg'
 
 Configure machine scope with `github_owners` in config, `DAYLOG_GH_OWNERS`, or `--owner` (flag wins). Open PRs remain a **separate current-state snapshot**, never journal work. Snapshot PRs use their own `repo` display label and provider URLs; narrative context uses structured repository identity.
 
-All three widgets consume only `today --json`, now using `display_at` and `filed_at`:
+The desktop consumers read only `today --json`, using `display_at` and `filed_at`:
 
+- [Native macOS app (SwiftUI POC)](macos-app/README.md) — no SwiftBar required
 - [Omarchy](omarchy-plugin/README.md)
-- [SwiftBar](swiftbar-plugin/README.md)
 - [Windows tray](windows-plugin/README.md)
+- [SwiftBar (optional legacy widget)](swiftbar-plugin/README.md)
 
 Install/update consumers together with this binary; keep the selected data directory consistent. No consumer reads the queue or Athena's decision output.
 
@@ -163,6 +167,7 @@ Install/update consumers together with this binary; keep the selected data direc
 ```sh
 go test ./...
 go vet ./...
+swift run --package-path macos-app DaylogCoreChecks  # macOS only
 go test -race ./...
 node --experimental-strip-types --test integrations/pi/daylog.test.mjs integrations/consumers.test.mjs swiftbar-plugin/daylog.test.mjs
 GOOS=linux GOARCH=amd64 go build ./...

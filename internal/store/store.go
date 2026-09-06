@@ -167,6 +167,28 @@ func ReadAll() ([]event.Event, error) {
 	defer u()
 	return readAll()
 }
+
+// ReadAllExisting reads a configured store without initializing a missing one.
+func ReadAllExisting() ([]event.Event, error) {
+	root, err := DataDir()
+	if err != nil {
+		return nil, err
+	}
+	var manifest Manifest
+	if err := durable.Read(filepath.Join(root, "store.json"), &manifest); err != nil {
+		return nil, err
+	}
+	if manifest.Version != Version || manifest.Protocol != "local-append-once-v2" {
+		return nil, fmt.Errorf("unsupported store version/protocol; choose a fresh DAYLOG_DIR")
+	}
+	unlock, err := durable.Lock(filepath.Join(root, "store.lock"), true)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return readAll()
+}
+
 func ReadDay(day time.Time) ([]event.Event, error) {
 	all, err := ReadAll()
 	if err != nil {
