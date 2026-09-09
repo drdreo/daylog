@@ -39,8 +39,8 @@ func init() {
 		}
 		return printJSON(cmd, map[string]int{"pruned_evidence": n})
 	}})
-	var shadow, once bool
-	c := &cobra.Command{Use: "curate --once", Short: "Run Athena's bounded gatekeeping worker (shadow by default)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	var dryRun, once bool
+	c := &cobra.Command{Use: "curate --once", Short: "Curate queued reports; --dry-run previews without processing them", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if !once {
 			return fmt.Errorf("--once required; schedule repeated one-shot runs")
 		}
@@ -53,14 +53,14 @@ func init() {
 			return err
 		}
 		w := athena.Worker{Queue: q, Config: cfg, Runner: athena.PiRunner{Config: cfg.Runner}}
-		res, err := w.Once(cmd.Context(), shadow)
+		res, err := w.Once(cmd.Context(), dryRun)
 		if e := printJSON(cmd, res); e != nil {
 			return e
 		}
 		return err
 	}}
 	c.Flags().BoolVar(&once, "once", false, "perform one bounded run")
-	c.Flags().BoolVar(&shadow, "shadow", false, "never publish, even on a live machine")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview decisions without changing receipts or the journal (uses model calls)")
 	rootCmd.AddCommand(c)
 	queue := &cobra.Command{Use: "queue", Short: "Inspect private candidates (not todos)"}
 	var status string
@@ -78,7 +78,7 @@ func init() {
 	list.Flags().StringVar(&status, "status", "", "pending|processing|processed|error")
 	queue.AddCommand(list)
 	var source string
-	retry := &cobra.Command{Use: "retry <candidate-id>", Short: "Explicit bounded replay; old shadow decisions are never auto-published", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	retry := &cobra.Command{Use: "retry <candidate-id>", Short: "Request fresh evaluation of a processed or failed report", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := humanSource(source); err != nil {
 			return err
 		}

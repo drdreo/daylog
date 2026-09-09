@@ -25,7 +25,24 @@ func TestPiSubprocessIsolationCapsAndTimeout(t *testing.T) {
 				os.WriteFile(filepath.Join(authDir, name), []byte("MUST NOT ENTER POLICY"), 0600)
 			}
 			os.WriteFile(filepath.Join(authDir, "settings.json"), []byte(`{"retry":{"maxRetries":99},"extensions":["hostile.ts"]}`), 0600)
-			script := "#!/bin/sh\nif [ \"$1\" = auth ]; then printf 'fake-bearer-token\\n'; exit 0; fi\n[ \"$DAYLOG_INTERNAL\" = 1 ] || exit 11\n[ ! -f \"$PI_CODING_AGENT_DIR/AGENTS.md\" ] || exit 12\n[ ! -f \"$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md\" ] || exit 13\ncase \"$*\" in *--no-tools*--no-extensions*--no-skills*--no-prompt-templates*--no-context-files*) ;; *) exit 14;; esac\n"
+			t.Setenv("TEST_EXISTING_PI_DIR", authDir)
+			script := `#!/bin/sh
+[ "$1" != auth ] || exit 10
+[ "$DAYLOG_INTERNAL" = 1 ] || exit 11
+[ "$PI_CODING_AGENT_DIR" = "$TEST_EXISTING_PI_DIR" ] || exit 12
+[ "$DAYLOG_SOURCE" = agent:daylog-athena ] || exit 13
+case "$*" in *--no-session*--no-tools*--no-extensions*--no-skills*--no-prompt-templates*--no-themes*--no-context-files*--no-approve*) ;; *) exit 14;; esac
+# Verify the empty append override is an actual argv element, not omitted.
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --append-system-prompt ]; then
+    shift
+    [ "$#" -gt 0 ] && [ -z "$1" ] || exit 15
+    break
+  fi
+  shift
+done
+[ "$#" -gt 0 ] || exit 16
+`
 			switch mode {
 			case "success", "launcher":
 				script += "printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\",\"content\":[{\"type\":\"text\",\"text\":\"{\\\"version\\\":2,\\\"actions\\\":[]}\"}]}}' '{\"type\":\"agent_end\"}'\n"

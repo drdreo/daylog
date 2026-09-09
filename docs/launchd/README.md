@@ -16,12 +16,12 @@ Inspect/pause:
 ```sh
 launchctl print "gui/$(id -u)/dev.daylog.athena"
 launchctl bootout "gui/$(id -u)/dev.daylog.athena"
-# Or pause publication without disabling intake:
-daylog --data-dir "$HOME/daylog-v2" setup --mode shadow
+# Preview decisions without processing reports (still uses the model):
+daylog --data-dir "$HOME/daylog-v2" curate --once --dry-run
 ```
 
 After stopping the job, `daylog --data-dir ... setup --uninstall-resources` removes unchanged owned files and exact hook registrations. It retains store/config/history and refuses to delete human-modified files.
 
 This scheduler does not implicitly poll GitHub. Schedule a separate absolute `daylog --data-dir ... poll gh` command if desired, with an authenticated `gh` available to that job.
 
-The plist is generated/tested in scratch HOME and linted on macOS. **No real LaunchAgent was installed or started during implementation.** Live scheduling and provider authentication still require deliberate operational verification.
+The plist is tested in scratch HOME and linted on macOS. On 2026-09-09, the real LaunchAgent was activated and observed successfully retrying and publishing a report through the configured Pi/Luna model using its scheduled environment. This validates this Mac's setup, not other machines or native-hook capture coverage.

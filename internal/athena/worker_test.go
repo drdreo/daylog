@@ -42,20 +42,6 @@ func fixture(t *testing.T, mode string) (*Worker, *fakeRunner, capture.Candidate
 	}}
 	return &Worker{Queue: q, Config: cfg, Runner: f, Now: func() time.Time { return now }}, f, c
 }
-func TestShadowNeverPublishesOrAutoFlushes(t *testing.T) {
-	w, f, _ := fixture(t, "shadow")
-	if _, e := w.Once(context.Background(), false); e != nil {
-		t.Fatal(e)
-	}
-	w.Config.Mode = "live"
-	if _, e := w.Once(context.Background(), false); e != nil {
-		t.Fatal(e)
-	}
-	all, e := store.ReadAll()
-	if e != nil || len(all) != 0 || f.calls != 1 {
-		t.Fatal(all, e, f.calls)
-	}
-}
 func TestReplayAfterAppendBeforeAck(t *testing.T) {
 	w, f, _ := fixture(t, "live")
 	w.AfterAppend = func() error { return errors.New("simulated process death") }
@@ -79,7 +65,7 @@ func TestReplayAfterAppendBeforeAck(t *testing.T) {
 	}
 }
 func TestHoldNotRetriedByUnrelatedArrival(t *testing.T) {
-	w, f, c := fixture(t, "shadow")
+	w, f, c := fixture(t, "live")
 	f.fn = func(in Input) (Output, error) {
 		acts := []Action{}
 		for _, c := range in.Candidates {

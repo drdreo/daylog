@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestMidPlanRecoveryAndShadowOverride(t *testing.T) {
+func TestMidPlanRecoveryAndDryRun(t *testing.T) {
 	w, f, c := fixture(t, "live")
 	f.fn = func(Input) (Output, error) {
 		return Output{Version: 2, Actions: []Action{{Kind: "publish", Candidates: []string{c.ID}, Type: "work", Text: "First outcome", Reason: "distinct change"}, {Kind: "publish", Candidates: []string{c.ID}, Type: "work", Text: "Second outcome", Reason: "separate diagnosis"}}}, nil
@@ -23,7 +23,7 @@ func TestMidPlanRecoveryAndShadowOverride(t *testing.T) {
 	}
 	all, _ := store.ReadAll()
 	if len(all) != 1 {
-		t.Fatal("shadow resumed publication")
+		t.Fatal("dry-run resumed publication")
 	}
 	if _, e := w.Once(context.Background(), false); e != nil {
 		t.Fatal(e)
@@ -65,7 +65,7 @@ func TestHumanEditWhileModelRunsWins(t *testing.T) {
 	}
 }
 func TestRetentionKeepsPendingEvidence(t *testing.T) {
-	w, f, c := fixture(t, "shadow")
+	w, f, c := fixture(t, "live")
 	e, err := w.Queue.PutEvidence("bounded claim", "assistant-claim", c.CapturedAt)
 	if err != nil {
 		t.Fatal(err)

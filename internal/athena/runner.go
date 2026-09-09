@@ -54,41 +54,14 @@ func (r PiRunner) Run(parent context.Context, in Input) (Output, error) {
 	if len(b) > c.MaxInputBytes {
 		return out, fmt.Errorf("Athena input exceeds cap")
 	}
-	// A private settings home disables global retries, prompts, and resources while
-	// using the installed pi auth command for locked credential refresh. Never
-	// symlink auth.json: pi locks that lexical path, which would race the real harness.
+	// Run outside any project. Pi owns its normal model catalog, credentials,
+	// and refresh locking; CLI flags disable tools and prompt/resource discovery.
 	tmp, err := os.MkdirTemp("", "daylog-athena-")
 	if err != nil {
 		return out, err
 	}
 	defer os.RemoveAll(tmp)
 	if err := durable.Private(tmp, true); err != nil {
-		return out, err
-	}
-	agent := filepath.Join(tmp, "agent")
-	if err := durable.Mkdir(agent); err != nil {
-		return out, err
-	}
-	authDir := c.AgentDir
-	if authDir == "" {
-		return out, fmt.Errorf("Athena unavailable: point runner.agent_dir at your existing pi configuration; reports remain queued")
-	}
-	for _, name := range []string{"models.json", "models-store.json"} {
-		data, err := os.ReadFile(filepath.Join(authDir, name))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return out, err
-		}
-		if len(data) > 4*1024*1024 {
-			return out, fmt.Errorf("pi catalog exceeds 4 MiB")
-		}
-		if err := durable.Write(filepath.Join(agent, name), data); err != nil {
-			return out, err
-		}
-	}
-	if err := durable.JSON(filepath.Join(agent, "settings.json"), map[string]any{"retry": map[string]any{"enabled": false, "maxRetries": 0, "provider": map[string]any{"maxRetries": 0}}, "compaction": map[string]any{"enabled": false}, "enableInstallTelemetry": false}); err != nil {
 		return out, err
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(c.TimeoutSeconds)*time.Second)
@@ -105,33 +78,10 @@ func (r PiRunner) Run(parent context.Context, in Input) (Output, error) {
 		}
 		env = append(env, e)
 	}
-	authArgs := []string{"auth", "print-api-key", "--provider", c.Provider, "--no-extensions", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-approve", "--offline"}
-	if c.CredentialType == "oauth" {
-		authArgs[1] = "print-bearer-token"
-		authArgs = append(authArgs, "--min-expiry", fmt.Sprintf("%ds", c.TimeoutSeconds+60))
+	cmd.Env = append(env, "PATH="+c.Path, "DAYLOG_INTERNAL=1", "DAYLOG_SOURCE=agent:daylog-athena", "PI_OFFLINE=1", "PI_TELEMETRY=0")
+	if c.AgentDir != "" {
+		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+c.AgentDir)
 	}
-	auth := exec.CommandContext(ctx, c.Binary, append(append([]string{}, c.Arguments...), authArgs...)...)
-	auth.Dir = tmp
-	auth.WaitDelay = 2 * time.Second
-	auth.Env = append(append([]string{}, env...), "PATH="+c.Path, "PI_CODING_AGENT_DIR="+authDir, "DAYLOG_INTERNAL=1", "PI_OFFLINE=1", "PI_TELEMETRY=0")
-	token := &capBuffer{max: 16384}
-	auth.Stdout = token
-	auth.Stderr = &capBuffer{max: 8192}
-	if err := auth.Run(); err != nil {
-		return out, fmt.Errorf("Athena could not access the configured model %s/%s: could not use the installed pi harness or its existing authentication (%w); run daylog doctor --check-model; reports remain queued", c.Provider, c.Model, err)
-	}
-	key := strings.TrimSpace(token.String())
-	if key == "" || strings.ContainsAny(key, "\r\n") {
-		return out, fmt.Errorf("pi returned an invalid credential")
-	}
-	credential := map[string]any{"type": "api_key", "key": key}
-	if c.CredentialType == "oauth" {
-		credential = map[string]any{"type": "oauth", "access": key, "refresh": "", "expires": time.Now().Add(time.Duration(c.TimeoutSeconds+30) * time.Second).UnixMilli()}
-	}
-	if err := durable.JSON(filepath.Join(agent, "auth.json"), map[string]any{c.Provider: credential}); err != nil {
-		return out, err
-	}
-	cmd.Env = append(env, "PATH="+c.Path, "PI_CODING_AGENT_DIR="+agent, "DAYLOG_INTERNAL=1", "DAYLOG_SOURCE=agent:daylog-athena", "PI_OFFLINE=1", "PI_TELEMETRY=0")
 	stdout := &capBuffer{max: c.MaxOutputBytes}
 	stderr := &capBuffer{max: 8192}
 	cmd.Stdout = stdout
@@ -150,7 +100,7 @@ func ParseEvents(b []byte) (Output, error) {
 	var out Output
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 4096), 4*1024*1024)
-	final := ""
+	final, stopReason := "", ""
 	ended := false
 	for sc.Scan() {
 		var e struct {
@@ -170,10 +120,13 @@ func ParseEvents(b []byte) (Output, error) {
 		if strings.HasPrefix(e.Type, "tool_execution") {
 			return out, fmt.Errorf("Athena's isolated model attempted a tool")
 		}
+		// Pi can emit a failed assistant turn, then retry successfully within the
+		// same process. Never accept an earlier result if a later turn is unfinished.
+		if e.Type == "agent_start" || e.Type == "turn_start" || e.Type == "message_start" || e.Type == "auto_retry_start" {
+			final, stopReason, ended = "", "", false
+		}
 		if e.Type == "message_end" && e.Message.Role == "assistant" {
-			if e.Message.StopReason != "stop" {
-				return out, fmt.Errorf("pi assistant did not finish normally: %s", e.Message.StopReason)
-			}
+			stopReason, ended = e.Message.StopReason, false
 			var text strings.Builder
 			for _, part := range e.Message.Content {
 				if part.Type == "toolCall" {
@@ -192,7 +145,13 @@ func ParseEvents(b []byte) (Output, error) {
 	if err := sc.Err(); err != nil {
 		return out, err
 	}
-	if !ended || final == "" {
+	if !ended || stopReason == "" {
+		return out, fmt.Errorf("incomplete pi event stream")
+	}
+	if stopReason != "stop" {
+		return out, fmt.Errorf("pi assistant did not finish normally: %s", stopReason)
+	}
+	if final == "" {
 		return out, fmt.Errorf("incomplete pi event stream")
 	}
 	if len(final) > 65536 {

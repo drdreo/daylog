@@ -25,6 +25,9 @@ func init() {
 		if _, err := humanSource(""); err != nil {
 			return err
 		}
+		if mode != "" && mode != "live" {
+			return fmt.Errorf("setup only accepts --mode live to resume legacy configurations; use curate --once --dry-run to preview, or stop the scheduler to pause")
+		}
 		cfg, err := config.Load()
 		if err != nil {
 			return err
@@ -161,7 +164,7 @@ func init() {
 				}
 			}
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "configured", root, "mode", cfg.Mode, "(old shadow results remain unapplied)")
+		fmt.Fprintln(cmd.OutOrStdout(), "configured", root, "mode", cfg.Mode)
 		return nil
 	}}
 	c.Flags().StringVar(&piPath, "pi", "", "absolute pi executable or Node launcher path")
@@ -169,7 +172,7 @@ func init() {
 	c.Flags().StringVar(&agentDir, "pi-agent-dir", "", "installed pi auth/catalog directory")
 	c.Flags().StringArrayVar(&projects, "approve-project", nil, "approve this project for cloud editing; repeatable")
 	c.Flags().StringArrayVar(&scopes, "capture-scope", nil, "approve harness=/native/session/directory for local scanning; repeatable")
-	c.Flags().StringVar(&mode, "mode", "", "shadow or explicit live opt-in")
+	c.Flags().StringVar(&mode, "mode", "", "live: explicitly resume an old shadow configuration (new installs are already live)")
 	c.Flags().BoolVar(&installAdapters, "install-adapters", false, "install configured harness adapters without bypassing trust")
 	c.Flags().BoolVar(&installSkills, "install-skills", false, "install the same reporting instructions for all harnesses")
 	c.Flags().BoolVar(&schedule, "schedule", false, "write platform scheduler resources")

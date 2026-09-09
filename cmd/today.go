@@ -65,7 +65,7 @@ func argDate(args []string) (time.Time, error) {
 }
 
 func foldDay(date time.Time) (view.Day, error) {
-	all, err := store.ReadAll()
+	all, err := store.ReadAllExisting()
 	if err != nil {
 		return view.Day{}, err
 	}

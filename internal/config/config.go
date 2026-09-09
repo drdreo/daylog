@@ -18,7 +18,7 @@ type Scope struct {
 }
 type Runner struct {
 	Arguments      []string `json:"arguments"`
-	CredentialType string   `json:"credential_type"`
+	CredentialType string   `json:"credential_type,omitempty"` // Legacy config field; Pi now resolves authentication itself.
 	Binary         string   `json:"binary"`
 	Path           string   `json:"path"`
 	AgentDir       string   `json:"agent_dir"`
@@ -45,7 +45,7 @@ type Config struct {
 }
 
 func Defaults() Config {
-	return Config{Version: Version, Mode: "shadow", Runner: Runner{CredentialType: "oauth", Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CloudProjects: []string{}, CaptureScopes: []Scope{}}
+	return Config{Version: Version, Mode: "live", Runner: Runner{Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CloudProjects: []string{}, CaptureScopes: []Scope{}}
 }
 func Path() (string, error) { r, e := store.DataDir(); return filepath.Join(r, "config.json"), e }
 func Load() (Config, error) {
@@ -80,6 +80,8 @@ func (c Config) Validate() error {
 	if c.Version != Version {
 		return fmt.Errorf("unsupported config version %d", c.Version)
 	}
+	// Accept old shadow configs without silently enabling their publication.
+	// New installs are live; preview is now a per-invocation CLI flag.
 	if c.Mode != "shadow" && c.Mode != "live" {
 		return fmt.Errorf("mode must be shadow or live")
 	}
@@ -91,9 +93,6 @@ func (c Config) Validate() error {
 		if len(arg) > 4096 {
 			return fmt.Errorf("runner argument exceeds limit")
 		}
-	}
-	if r.CredentialType != "oauth" && r.CredentialType != "api_key" {
-		return fmt.Errorf("runner.credential_type must be oauth or api_key")
 	}
 	if r.Provider == "" || r.Model == "" || r.TimeoutSeconds < 1 || r.TimeoutSeconds > 600 || r.MaxInputBytes < 1024 || r.MaxInputBytes > 262144 || r.MaxOutputBytes < 1024 || r.MaxOutputBytes > 4194304 || r.CallsPerRun < 1 || r.CallsPerRun > 20 || r.CallsPerDay < 1 || r.CallsPerDay > 1000 || r.MaxAttempts < 1 || r.MaxAttempts > 5 {
 		return fmt.Errorf("invalid runner limits")

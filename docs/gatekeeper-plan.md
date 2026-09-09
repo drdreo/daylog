@@ -2,7 +2,7 @@
 
 **Naming:** Athena is the gatekeeping subsystem/module (`internal/athena`), not the model or a persona. References to the editor below describe its model-assisted curation component. `daylog curate` remains the action verb.
 
-- **Status:** v2 implementation through checkpoint 7 is present. Checkpoint 8 remains an explicit human opt-in. The configured-model smoke/quality evaluation, live harness runs, and Windows/Linux runtime validation have **not** been performed.
+- **Status:** v2 implementation through checkpoint 7 is present. On 2026-09-09, seven synthetic Luna policy cases passed; nine real macOS reports were previewed and then freshly evaluated and published with human approval under `athena-v2.2`. One invented reference was rejected, then the activated LaunchAgent successfully retried it. New configs default to live; preview is explicit `--dry-run` without consuming reports. This small sample is not a quality/recall guarantee. Live harness capture and Windows/Linux runtime validation remain unverified.
 - **Date:** 2026-09-06
 - **Delivery:** one cohesive implementation pass, in the ordered checkpoints below. No PR stack or mandatory week-long rollout. Installation and live publication remain explicit actions.
 
@@ -50,7 +50,7 @@ Hooks are not a second publisher. They supply evidence to the same editor when r
 | Intake and queue | Original context/time, evidence IDs, durability, processing state | Semantic judgment |
 | pi/Luna editor | Relevance, supported wording, outcome grouping, proposed edits | Filesystem access, shell, queue state, timestamps, authority to overwrite human choices |
 | Go publisher | Schema/target validation, revision checks, replay safety, immutable events | Inventing facts or treating model confidence as proof |
-| Human | Explicit notes/todos, corrections, preferences, live-mode opt-in | Reviewing every candidate |
+| Human | Explicit notes/todos, corrections, preferences, project approval | Reviewing every candidate |
 
 ## 3. CLI behavior and operating modes
 
@@ -72,24 +72,24 @@ Routing is deliberately narrow:
 - Human commands handle todo adoption/decline/completion and narrative corrections. Consolidate command names where useful; the old `reclassify` command need not survive separately from `amend`. The gatekeeper cannot create, close, or approve obligations.
 - Poller snapshots: separate current state; never pass PR/CI status through as work outcomes.
 
-There are only two machine-scoped worker modes. Neither changes intake:
+Live curation is the normal path. Preview is an explicit invocation, not a machine-scoped rollout state:
 
-| Mode | Agent narrative intake | Worker |
+| Invocation | Agent narrative intake | Worker |
 | --- | --- | --- |
-| `shadow` (default) | Always queue | Persist decisions; no ledger publication |
-| `live` | Always queue | Apply validated editorial decisions |
+| `curate --once` / scheduled `tick` | Always queue | Apply validated editorial decisions |
+| `curate --once --dry-run` | Always queue | Return preview actions; leave reports unprocessed |
 
-**There is no legacy/direct-agent mode and no parallel publisher.** Shadow is a short evaluation state, not a second inbox or a promise that queued work has been published. Human notes written into the new store remain visible in either mode.
+**There is no direct-agent mode or parallel publisher.** Dry runs still invoke the model and count against the budget. Legacy shadow configs remain paused until explicitly resumed; historical shadow plans never auto-publish. New runs do not create shadow plans.
 
-The skill has one instruction set: report facts and distinguish attempted from completed work; the editor handles relevance and grouping. It does not inspect the mode or carry the old materiality rubric. Pause publication by stopping the worker or returning to shadow. Intake keeps queuing and never auto-flushes reports as journal entries.
+The skill has one instruction set: report facts and distinguish attempted from completed work; the editor handles relevance and grouping. It does not inspect the mode or carry the old materiality rubric. Pause publication by stopping the scheduled worker. Intake keeps queuing and never auto-flushes reports as journal entries.
 
 The first release also exposes:
 
 ```sh
 daylog status --json                   # machine-readable intake/worker status
 daylog queue list --status pending     # inspect candidates, not todos
-daylog curate --once                   # honor configured shadow/live mode
-daylog curate --once --shadow          # never publish, even on a live machine
+daylog curate --once                   # evaluate and publish approved reports
+daylog curate --once --dry-run         # preview without processing reports
 daylog explain <candidate-or-entry>    # evidence, disposition, related outcomes
 daylog doctor                         # binary/model/adapter/queue health
 daylog amend <entry> "better wording"  # append a human correction
@@ -222,7 +222,7 @@ After the report-fed editor works, add pi `agent_settled`, Claude terminal/Stop 
 
 Use incremental native-session reconciliation to recover missed hooks and enrich incomplete reports. Share native identity/revision keys between hooks and replay where possible; relate distinct report and hook IDs at the episode/evidence level. Handle pi's branched/copied history, transcript lag, repeated Stop within a turn, interrupted sessions, and child lineage without claiming a session equals a task. No-session/hard-crash gaps without saved evidence are unavoidable and must be reported honestly.
 
-Scanning and cloud evidence submission require explicitly approved directories/projects. Do not vacuum the entire transcript history on installation. Keep raw sessions at their native paths and copy only necessary bounded excerpts. Exclude credentials, `.env` material, hidden reasoning, and irrelevant tool output; redaction is best-effort, not blanket permission to upload a repository. A report containing only a bare claim may be held; the editor should not pretend to have independently verified it.
+Scanning and cloud evidence submission require explicitly approved directories/projects. Do not vacuum the entire transcript history on installation. Keep raw sessions at their native paths and copy only necessary bounded excerpts. Exclude credentials, `.env` material, hidden reasoning, and irrelevant tool output; redaction is best-effort, not blanket permission to upload a repository. Concrete agent handovers are sufficient source material without proof attachments. The editor preserves meaningful limitations and narrows overbroad claims rather than pretending to independently verify them; only genuinely unclear or contradictory results need a hold.
 
 Exclude the daylog **data** directory and internal editor processes, not the daylog source repository. Treat all reports/transcripts/repository content as untrusted data. Source environment variables prevent accidental attribution mistakes; they are not an OS security boundary against other same-user processes.
 
@@ -233,7 +233,7 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 ### 1. Define contracts and fixtures
 
 - [x] Define one clean event/view contract plus candidate, receipt, editor-plan/action, provenance, correction, and config schemas with explicit versions. Remove old schema and timestamp constraints.
-- [x] Add typed gatekeeper settings (`shadow` default, `live` opt-in), fresh-store initialization, build/store version reporting, runner configuration, and a fake runner/clock seam.
+- [x] Add typed gatekeeper settings (live default, per-run dry-run preview), fresh-store initialization, build/store version reporting, runner configuration, and a fake runner/clock seam.
 - [x] Keep candidate report size bounded independently of the concise published TLDR; do not force reporters to write publication-ready copy.
 - [x] Create sanitized golden episodes for keep/skip/hold, duplicate reports, same task across agents, human correction, and unsupported claims.
 
@@ -265,7 +265,7 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 - [x] Add the isolated pi subprocess runner, bounded JSON-event parser, versioned policy prompt, and strict action validator.
 - [x] Batch by related episode, include relevant active and suppressed outcomes, persist plans before applying operations, and record skip/hold reasons.
-- [x] Implement `curate --once`, shadow execution, stale-plan handling, replay, model-error backoff, and `explain`.
+- [x] Implement `curate --once`, dry-run preview, legacy shadow recovery, stale-plan handling, replay, model-error backoff, and `explain`.
 
 **Implementation paths:** `internal/athena/`, `cmd/athena.go`. Embed the default policy/schema into the binary so the installed worker does not depend on checkout-relative files.
 
@@ -307,8 +307,8 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 
 - [ ] Install the verified binary/integrations for approved scopes into a fresh store, use the single new reporting instruction set, and inspect a small shadow sample. Do not import old history.
 - [ ] Check unsupported claims, duplicates, valuable misses, latency/cost, and report/hook overlap. Grow toward 30–50 labeled examples; do not require a calendar delay just to satisfy a rollout ritual.
-- [ ] Switch to live explicitly. Keep old shadow results unapplied by default; any bounded replay into live mode revalidates current human edits, dedup state, and policy.
-- [ ] Document the pause/recovery procedure: stop workers or return to shadow, retain queued evidence, fix the problem, and resume. No old binary/schema rollback, direct-agent mode, automatic flush, or destructive reset.
+- [x] Resume the existing Mac configuration with explicit human approval and freshly evaluate the nine historical shadow reports before publication. New configs now default to live, and legacy shadow plans remain inert.
+- [x] Document the pause/recovery procedure: stop scheduled workers, retain queued evidence, fix the problem, and resume. No old binary/schema rollback, direct-agent mode, automatic flush, or destructive reset.
 
 **Done when:** the human finds the output worth reading, deliberate skips are explainable, and forced replay does not multiply entries or resurrect dismissed outcomes. No numerical quality claim is established by this plan alone.
 
@@ -321,4 +321,4 @@ Each step is a suggested commit/checkpoint, not a separate PR or rollout. Keep t
 - A permanent conversational gatekeeper session; durable context belongs in data, not an ever-growing chat.
 - Rich merge/split UI, weekly recaps, catch-up/resume surfaces, and model cascades. Useful follow-ons, not prerequisites.
 
-**Next operational action:** review the implemented contracts and verification limits, then explicitly approve a sanitized model smoke/shadow evaluation and any desired live installation. Checkpoint 8 is not a side effect of tests or `git merge`. The checkboxes above describe code delivery, not a claim that unrun model/live/platform checks passed.
+**Next operational action:** monitor the live Mac journal and use human corrections to tune relevance. Optional native-hook capture and Linux/Windows activation still need explicit scope approval and runtime checks. Do not treat the successful report-only Mac cutover as evidence of full cross-harness or cross-platform coverage.

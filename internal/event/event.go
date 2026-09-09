@@ -12,7 +12,11 @@ import (
 )
 
 const Version = 2
-const MaxTLDRChars = 280
+const MaxTLDRChars = 280 // Existing entries and human notes retain their original limit.
+const MaxHeadlineChars = 100
+const MaxDetailsChars = 2000
+const MaxTags = 3
+const MaxTagChars = 24
 const (
 	TypeWork        = "work"
 	TypeSidequest   = "sidequest"
@@ -99,6 +103,8 @@ type Event struct {
 	Source         string      `json:"source"`
 	Type           string      `json:"type"`
 	TLDR           string      `json:"tldr,omitempty"`
+	Details        string      `json:"details,omitempty"`
+	Tags           []string    `json:"tags,omitempty"`
 	Refs           []string    `json:"refs"`
 	Context        Context     `json:"context"`
 	Targets        []Target    `json:"targets,omitempty"`
@@ -141,6 +147,25 @@ func Narrative(t string) bool { return t == TypeWork || t == TypeSidequest || t 
 func ValidateTLDR(s string) error {
 	if strings.TrimSpace(s) == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > MaxTLDRChars || strings.ContainsAny(s, "\r\n\x00") {
 		return fmt.Errorf("tldr must be a nonempty single line of at most %d characters", MaxTLDRChars)
+	}
+	return nil
+}
+
+// Presentation is plain text plus small label chips, never executable markup.
+func ValidatePresentation(details string, tags []string) error {
+	if !utf8.ValidString(details) || utf8.RuneCountInString(details) > MaxDetailsChars || strings.ContainsAny(details, "\r\x00") {
+		return fmt.Errorf("details must be plain text of at most %d characters", MaxDetailsChars)
+	}
+	if len(tags) > MaxTags {
+		return fmt.Errorf("at most %d tags allowed", MaxTags)
+	}
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		key := strings.ToLower(tag)
+		if tag == "" || tag != strings.TrimSpace(tag) || !utf8.ValidString(tag) || utf8.RuneCountInString(tag) > MaxTagChars || strings.ContainsAny(tag, "\r\n\t\x00") || seen[key] {
+			return fmt.Errorf("tags must be unique single-line labels of at most %d characters", MaxTagChars)
+		}
+		seen[key] = true
 	}
 	return nil
 }
@@ -197,6 +222,12 @@ func (e Event) Validate() error {
 	}
 	if len(e.Refs) > 32 || len(e.Targets) > 16 || len(e.Reason) > 1024 || len(e.TLDR) > 4096 {
 		return fmt.Errorf("event exceeds bounds")
+	}
+	if err := ValidatePresentation(e.Details, e.Tags); err != nil {
+		return err
+	}
+	if (e.Details != "" || len(e.Tags) != 0) && !Narrative(e.Type) && e.Type != TypeAmend && e.Type != TypeMerge {
+		return fmt.Errorf("details and tags belong only to narrative entries")
 	}
 	for _, r := range e.Refs {
 		if _, err := NormalizeRef(r, Repository{}); err != nil {
@@ -269,6 +300,7 @@ func Effective(all []Event) map[string]Entry {
 			case TypeAmend:
 				en.Refs = unique(append(append([]string{}, en.Refs...), e.Refs...))
 				en.TLDR = e.TLDR
+				en.Details, en.Tags = e.Details, e.Tags
 				if e.ToType != "" {
 					en.Type = e.ToType
 				}
@@ -286,6 +318,8 @@ func Effective(all []Event) map[string]Entry {
 			case TypeMerge:
 				if i == 0 {
 					en.TLDR = e.TLDR
+					en.Details, en.Tags = e.Details, e.Tags
+					en.Refs = unique(append(append([]string{}, en.Refs...), e.Refs...))
 					en.Pinned = en.Pinned || Human(e.Source)
 					for _, other := range e.Targets[1:] {
 						en.Provenance = combineProvenance(en.Provenance, out[other.ID].Provenance)

@@ -27,15 +27,9 @@ func TestUnavailableExistingHarnessOrModelHasActionableError(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("TEST_EXISTING_PI_DIR", cfg.AgentDir)
-			// Resolve credentials only through the user's configured harness directory.
+			// Pi resolves credentials itself in its normal configured directory.
 			// Provider stderr must not leak credentials into the diagnostic.
-			script := "#!/bin/sh\nif [ \"$1\" = auth ]; then\n [ \"$PI_CODING_AGENT_DIR\" = \"$TEST_EXISTING_PI_DIR\" ] || exit 91\n"
-			if failure == "missing-auth" {
-				script += " echo PRIVATE-CREDENTIAL >&2; exit 1\n"
-			} else {
-				script += " echo existing-token; exit 0\n"
-			}
-			script += "fi\necho PRIVATE-CREDENTIAL >&2\nexit 1\n"
+			script := "#!/bin/sh\n[ \"$1\" != auth ] || exit 90\n[ \"$PI_CODING_AGENT_DIR\" = \"$TEST_EXISTING_PI_DIR\" ] || exit 91\necho PRIVATE-CREDENTIAL >&2\nexit 1\n"
 			if failure != "missing-harness" {
 				if err := os.WriteFile(cfg.Binary, []byte(script), 0700); err != nil {
 					t.Fatal(err)

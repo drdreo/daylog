@@ -1,6 +1,6 @@
 # Athena — daylog's gatekeeping subsystem
 
-**Contract:** store/event/view v2; Athena policy `athena-v2.1`. See the [implementation plan](docs/gatekeeper-plan.md), [usage](README.md), and [native contracts](integrations/README.md). The original direct-agent architecture has been replaced; no legacy reader, publisher, migration, or synchronization protocol is supported.
+**Contract:** store/event/view v2; Athena policy `athena-v2.3`. See the [implementation plan](docs/gatekeeper-plan.md), [usage](README.md), and [native contracts](integrations/README.md). The original direct-agent architecture has been replaced; no legacy reader, publisher, migration, or synchronization protocol is supported.
 
 ## Ownership and boundaries
 
@@ -29,7 +29,7 @@ human notes/todos/corrections ────────► same locked event writ
 GitHub poller ─► disposable PR snapshot ─► separate view collection
 ```
 
-Working agents report facts and uncertainty, not journal materiality. Athena manages relevance, supported wording, grouping, proposed corrections, skips, and holds. Its model has no tools, queue authority, obligation lifecycle controls, or timestamp/identity authority. Athena's Go code owns metadata, validation, decision persistence, and replay through the shared ledger. Human source strings are an accident-prevention convention, not same-user authentication.
+Working agents report facts and uncertainty, not journal materiality. Athena treats concrete reports as the journal's source, not claims requiring independent proof. It manages relevance, faithful wording, grouping, proposed corrections and skips; holds are for material contradictions or genuinely unclear results, not absent evidence attachments. Its model has no tools, queue authority, obligation lifecycle controls, or timestamp/identity authority. Athena's Go code owns metadata, validation, decision persistence, and replay through the shared ledger. Human source strings are an accident-prevention convention, not same-user authentication.
 
 ## Store layout
 
@@ -57,7 +57,7 @@ Atomic replacement writes a private temporary file, checks complete write, syncs
 
 ## Contracts
 
-`internal/event` defines explicit event/entry, repository/context, target revision, and provenance types. Unsupported kinds/versions and invalid refs fail. Corrective events carry explicit target IDs/revisions; narrative and todo lifecycle events have required occurrence and recording timestamps. Local sequence numbers are assigned under the ledger lock, avoiding clock-skew ordering of corrections. Files partition on `recorded_at`; the folded `display_at` uses occurrence time and its captured offset, or the completion event for closed todos. `filed_at` remains available. Bookkeeping never appears as another accomplishment.
+`internal/event` defines explicit event/entry, repository/context, target revision, and provenance types. Narrative presentation has a `tldr` headline plus optional plain-text `details` and `tags`; model headlines are at most 100 characters, details at most 2,000 characters, and there are at most three 24-character tags. Historical TLDRs and human notes keep the 280-character limit. Swift renders collapsed headlines, expandable details, and selected typed reference chips; the model never supplies executable layout or arbitrary link destinations. Amend/merge replace presentation together so human wording changes cannot retain stale model details. Unsupported kinds/versions and invalid refs fail. Corrective events carry explicit target IDs/revisions; narrative and todo lifecycle events have required occurrence and recording timestamps. Local sequence numbers are assigned under the ledger lock, avoiding clock-skew ordering of corrections. Files partition on `recorded_at`; the folded `display_at` uses occurrence time and its captured offset, or the completion event for closed todos. `filed_at` remains available. Bookkeeping never appears as another accomplishment.
 
 `internal/capture` separates immutable candidates from atomic receipts:
 
@@ -69,11 +69,11 @@ Unkeyed CLI reports remain independent. Stable request keys reject conflicting t
 
 ## Athena's curation and replay protocol
 
-1. Acquire worker lock. Recover saved ready live plans only in live mode; finalize shadow receipts without publishing. A `--shadow` run cannot resume a live plan's remaining operations.
+1. Acquire worker lock. Normal runs recover saved ready live plans and finalize legacy shadow receipts without publishing them. Incompatible plans are retained as stopped, their reports leave processing for explicit retry, and unrelated work continues. Already-applied operations are recovered by publication key before acknowledgment. An explicit `--dry-run` skips recovery, claims and receipt changes; it returns validated preview actions instead of saving plans or publishing. Dry runs still reserve model-call budget, and leave reports eligible for normal evaluation.
 2. Reclaim interrupted processing claims without a persisted plan. Persist a new claim identity before model execution; a completed plan is matched to that exact claim, not just matching text.
 3. Select quiet/max-wait bounded episodes. Held/skipped material is reconsidered only with new same-episode evidence or explicit human retry. Include relevant active, pinned, dismissed and merged outcomes and bounded preference examples.
 4. Check captured-project cloud approval. Reserve the invocation budget durably before calling pi. Model failures use bounded attempt/backoff receipts; they never enable another publisher.
-5. Parse authoritative final assistant `message_end` from pi JSON events; reject failed/incomplete/tool-using streams, oversized data, trailing prose, duplicate/unknown JSON fields, invented candidates/evidence/refs, conflicting actions, invalid targets, and human-protected edits. Every input must be accounted for; one report may support several distinct outcomes.
+5. Parse the terminal assistant `message_end` from pi JSON events, allowing Pi's intermediate failed turns followed by successful retries; reject terminal failures, unfinished retries, any tool use, oversized data, trailing prose, duplicate/unknown JSON fields, invented candidates/evidence/refs, conflicting actions, invalid targets, and human-protected edits. Every input must be accounted for; one report may support several distinct outcomes.
 6. Go assigns stable plan/operation/publication IDs and preserves primary reporter plus all contributor sources. Validate the complete plan before durable installation. Later-day milestones cannot amend yesterday's outcome.
 7. Under the shared store lock, scan the ledger without ignoring corruption; find an existing publication key **before** checking stale revisions; otherwise check current targets/protections, append completely, sync, and release. Acknowledgment follows append. A crash in that gap finds the existing event on replay; a mid-plan crash resumes remaining operations.
 8. A stale target conflict persists a stopped/error plan. Applied operations are neither duplicated nor undone. Explicit retry requests new bounded evaluation against current state. Shadow decisions are not a deferred automatic publication queue.
@@ -86,9 +86,9 @@ The append/dedup scan refuses malformed complete/middle records, duplicate keys/
 
 `internal/athena.PiRunner` invokes an argument vector, never shell-built evidence. It uses explicit provider/model/system policy, empty append policy, JSON/print mode, no session, tools, skills, extensions, themes, prompt templates, context discovery, project trust or startup network operations. Global `APPEND_SYSTEM.md` needs its own explicit override: `--no-context-files` alone is insufficient.
 
-An isolated private agent directory supplies bounded catalog copies and worker-only settings (no retries or compaction). The installed pi auth command performs refresh under its own normal credential lock; only the resulting credential is used in the worker-private auth file, without copying an OAuth refresh token. Symlinking `auth.json` would create a different lexical pi lock and race the real harness, so it is deliberately avoided. Secrets are not passed on argv, printed in errors, or included in plans. Private temporary files are removed on normal exit; OS-level crashes may leave private temporary directories requiring inspection/cleanup.
+The worker runs one normal `pi --print --mode json --model ...` command from an empty temporary working directory. Pi uses its existing agent directory, model catalog, authentication and credential refresh locking. Daylog does not read, export, copy, or reconstruct credentials, and does not create a second Pi configuration. CLI flags disable tools and resource discovery; normal Pi settings (including retries) otherwise apply within Daylog's overall subprocess deadline. Provider stderr is withheld from persisted errors. The empty working directory is removed on exit.
 
-Provider/model never silently falls back. `runner.binary`, `runner.agent_dir`, `runner.path`, input/output limits, timeout, attempt limits, and call budgets are persisted machine settings. No private data is sent by `add`, `today`, build, default tests, or installation. Shadow calls still submit approved evidence; shadow is not an offline mode.
+Provider/model never silently falls back. `runner.binary`, `runner.agent_dir`, `runner.path`, input/output limits, timeout, attempt limits, and call budgets are persisted machine settings. No private data is sent by `add`, `today`, build, default tests, or installation. Dry runs still submit approved reports/evidence; preview is not an offline mode.
 
 ## Capture and privacy
 
@@ -102,4 +102,4 @@ Scheduled recovery and cloud submission require separate explicit scope lists. T
 
 Tests use fake runner/clock seams, sanitized native/golden fixtures, real concurrent CLI processes, killed-worker replay, corruption/repair, mid-plan failure, stale human edits, retention, scratch resource installation, and a mock pi API. Three widget timestamp fields change in the same contract. No live inference is required; the synthetic Luna smoke test is opt-in.
 
-Installation, scheduler activation, real shadow evaluation and live cutover are not side effects of implementation. Pause by stopping the worker or selecting shadow; keep intake durable. Do not roll an old binary/schema back into this active store, import old records, or reset it destructively.
+New configurations use live curation; explicit `curate --once --dry-run` is the only new preview path. Old shadow configurations require explicit `setup --mode live`, and historical shadow plans can never auto-publish. Scheduler activation remains an explicit setup action. Pause by stopping the worker; keep intake durable. Do not roll an old binary/schema back into this active store, import old records, or reset it destructively.

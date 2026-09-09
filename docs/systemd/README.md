@@ -21,7 +21,7 @@ daylog --data-dir "$HOME/daylog-v2" setup --uninstall-resources
 systemctl --user daemon-reload
 ```
 
-Or choose shadow to pause publication while continuing intake. Saved shadow results never automatically flush into live mode.
+Stopping the timer pauses publication while intake continues. Use `daylog curate --once --dry-run` for an explicit preview; it does not process reports. Historical shadow plans never automatically publish.
 
 `daylog-poll-gh.service/.timer` remain separate snapshot-only polling templates. Set their absolute binary/data paths and an authenticated gh/PATH explicitly before enabling them; they are not installed implicitly by Athena setup.
 

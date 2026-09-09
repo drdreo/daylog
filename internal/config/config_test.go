@@ -9,7 +9,7 @@ import (
 func TestStrictConfig(t *testing.T) {
 	t.Setenv("DAYLOG_DIR", t.TempDir())
 	c, e := Load()
-	if e != nil || c.Mode != "shadow" {
+	if e != nil || c.Mode != "live" {
 		t.Fatal(c, e)
 	}
 	p, _ := Path()

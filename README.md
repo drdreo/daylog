@@ -33,9 +33,9 @@ daylog add --type work --ref '#142' \
 # human source: logged <entry-id>
 ```
 
-All agent `work`, `sidequest`, and `note` reports **always enqueue**. The worker being absent, broken, stopped, or in shadow never enables direct publication. Reports are bounded at 16 KiB; published wording is at most 280 characters. `--idempotency-key REQUEST` deduplicates identical keyed reports; ordinary unkeyed CLI calls are retained independently.
+All agent `work`, `sidequest`, and `note` reports **always enqueue**. The worker being absent, broken, stopped, or being previewed never enables direct publication. Reports are brief handovers: what changed or was learned, checks actually performed, and important limitations. They are bounded at 16 KiB; Athena writes a headline of at most 100 characters, optional expandable details of at most 2,000 characters, and up to three optional tags. Human notes and historical TLDRs retain their 280-character limit. No fixed form, proof attachments, or extra verification work are required just to report. `--idempotency-key REQUEST` deduplicates identical keyed reports; ordinary unkeyed CLI calls are retained independently.
 
-`queued` means durably captured, **not visible in the journal**. Athena may rewrite, combine, amend, merge, skip, or hold reports. See the single [reporting skill](skills/daylog/SKILL.md) and [instruction block](docs/AGENT_INSTRUCTIONS.md).
+`queued` means durably captured, **not visible in the journal**. Athena may rewrite, combine, amend, merge, skip, or hold reports. Concrete agent reports are sufficient source material: Athena curates them rather than requiring independent proof. It preserves reported uncertainty and holds only genuinely unclear or contradictory results. See the single [reporting skill](skills/daylog/SKILL.md) and [instruction block](docs/AGENT_INSTRUCTIONS.md).
 
 Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or `jira:PROJ-45`. `#142` expands using capture-time repository host/path. Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
 
@@ -58,28 +58,27 @@ These controls are human-only. In a shell inheriting agent identity, explicitly 
 
 ## Configure Athena deliberately
 
-Default mode is **shadow**: decisions are durable but nothing is published. **Live** is explicit machine configuration. Both use the same intake.
+New configurations are **live by default**: the worker curates and publishes approved reports. There is no shadow rollout to complete. Use an explicit **dry run** when you want to inspect proposed decisions without processing reports.
 
 ```sh
 daylog setup --pi /absolute/path/to/pi \
   --pi-agent-dir "$HOME/.pi/agent" \
   --approve-project /absolute/path/to/project
 
-daylog curate --once --shadow
-daylog queue list --status processed
+daylog curate --once --dry-run  # optional preview JSON; reports stay pending
+daylog curate --once            # fresh evaluation and publication
 daylog explain CANDIDATE
-# After inspecting a small sample yourself:
-daylog setup --mode live
-daylog curate --once
 ```
 
-`--approve-project` authorizes sending reports/evidence from that captured directory to the configured model, **including in shadow mode**. It does not scan sessions or install anything by itself. Approval applies to descendants; approve narrow worktree/project roots, not your entire home directory.
+`--approve-project` authorizes sending reports/evidence from that captured directory to the configured model, **including a dry run**. It does not scan sessions or install anything by itself. Approval applies to descendants; approve narrow worktree/project roots, not your entire home directory.
 
-Configuration is versioned `<data>/config.json`. `setup` persists executable paths and PATH for scheduled runs. Athena's default model is `openai-codex/gpt-5.6-luna` (catalog/CLI checked against pi 0.85.1). Provider/model are configurable; no provider fallback exists. `runner.credential_type` is `oauth` by default; use `api_key` for an API-key provider. Daylog reuses your installed pi harness, its configured model catalog, and existing authentication; it does not require a separate paid AI service or new API subscription. Authentication/refresh belongs to installed pi. If that harness/model is unavailable, Athena reports a clear error and retains the reports in the queue—there is no paid-provider fallback. Worker-private settings disable discovery, retries, tools, compaction, prompts and extensions; only the configured provider's short-lived credential and catalog are copied into the private temporary runtime. Global `APPEND_SYSTEM.md` is explicitly disabled as well as context files.
+Configuration is versioned `<data>/config.json`. `setup` persists executable paths and PATH for scheduled runs. Athena's default model is `openai-codex/gpt-5.6-luna` (catalog/CLI checked against pi 0.85.1). Provider/model are configurable; no provider fallback exists. Daylog reuses your installed pi harness, its configured model catalog, and existing authentication; it does not require a separate paid AI service or new API subscription. Authentication/refresh belongs to installed pi. If that harness/model is unavailable, Athena reports a clear error and retains the reports in the queue—there is no paid-provider fallback. The worker invokes Pi directly with its normal configuration and authentication—no credential copying or custom token handling. CLI flags disable tools, extensions, skills, prompt templates and context discovery, including global `APPEND_SYSTEM.md`. Normal Pi retry settings apply within Daylog's subprocess deadline.
 
-Initial bounds: 60-second episode quiet period, 300-second maximum wait, 8 inputs per batch, 2 model invocations per run, 40 per day, 120-second overall subprocess/auth deadline, 64 KiB input, 1 MiB event-stream output, and 3 failed attempts with backoff. These are configurable limits, **not measured latency/cost promises**. A call cap is not a dollar budget.
+Initial bounds: 60-second episode quiet period, 300-second maximum wait, 8 inputs per batch, 2 model invocations per run, 40 per day, 120-second overall subprocess deadline, 64 KiB input, 1 MiB event-stream output, and 3 failed attempts with backoff. These are configurable limits, **not measured latency/cost promises**. A call cap is not a dollar budget.
 
-Old shadow plans are **never auto-applied when switching live**. `daylog queue retry CANDIDATE` explicitly requests a bounded new evaluation against current outcomes/pins/dismissals. A crashed live plan resumes its saved operations without another model call. Stale target conflicts stop that plan and require inspection/retry; already-applied operations remain.
+Dry runs return `preview` actions without changing candidates, receipts, saved plans, or the journal. They still send approved inputs to Pi and count against the model-call budget. The next normal run evaluates pending reports afresh; no retry is needed after a dry run.
+
+For old installations only, an existing `mode: shadow` configuration stays paused until `daylog setup --mode live`. Old persisted shadow decisions are **never auto-applied**; use `daylog queue retry CANDIDATE` to explicitly request fresh evaluation against current outcomes/pins/dismissals. A crashed live plan resumes its saved operations without another model call. Stale targets or a policy change stop the affected plan and make its reports explicitly retryable without blocking unrelated reports. The plan and already-applied operations are retained, including writes recovered from an append-before-ack crash.
 
 ## Optional fallback capture and recovery
 
@@ -124,7 +123,7 @@ The generated one-shot job runs `daylog --data-dir ABSOLUTE tick`, which attempt
 - [Linux systemd](docs/systemd/README.md)
 - [Windows setup](docs/windows-setup.md)
 
-Pause by stopping the scheduled job or `daylog setup --mode shadow`. Intake continues to queue, never flushes directly to the ledger. Fix the problem, inspect `explain`, and resume. Stop/disable jobs **before** `daylog setup --uninstall-resources`; only unchanged owned files and the exact registered hook commands are removed. Store/config/history remain. Modified resources are retained with an error.
+Pause by stopping the scheduled job. For a one-off preview, use `daylog curate --once --dry-run`. Intake continues to queue, never flushes directly to the ledger. Fix the problem, inspect `explain`, and resume. Stop/disable jobs **before** `daylog setup --uninstall-resources`; only unchanged owned files and the exact registered hook commands are removed. Store/config/history remain. Modified resources are retained with an error.
 
 ## Read and diagnose
 
@@ -174,7 +173,7 @@ GOOS=linux GOARCH=amd64 go build ./...
 GOOS=windows GOARCH=amd64 go build ./...
 ```
 
-Tests include concurrent producer **processes**, a killed worker after append/before acknowledgment, mid-plan replay, human edits during inference, hostile output rejection, private-file permissions, occurrence-day folding, scoped native fixtures, scratch-HOME installation, and scheduler escaping. All test data is temporary; default tests require no model credentials. Cross-compilation is **not** Linux/Windows runtime validation, and mocked widget/adapters do not establish live desktop behavior. macOS is the runtime exercised in this implementation pass, including scratch-store JXA rendering and generated-plist linting (not actual SwiftBar UI or a running LaunchAgent).
+Tests include concurrent producer **processes**, a killed worker after append/before acknowledgment, mid-plan replay, human edits during inference, hostile output rejection, private-file permissions, occurrence-day folding, scoped native fixtures, scratch-HOME installation, and scheduler escaping. All test data is temporary; default tests require no model credentials. Cross-compilation is **not** Linux/Windows runtime validation, and mocked widget/adapters do not establish live desktop behavior. macOS has also been exercised with real Pi/Luna calls, nine backlog publications, Swift CLI decoding, and an activated LaunchAgent that successfully retried a rejected model decision. This does not establish live native-hook capture coverage or Linux/Windows runtime behavior.
 
 Optional synthetic-only smoke test using your existing configured pi model (not run by default). This invokes the model and uses whatever quota or billing already applies to that setup; no separate paid service is required:
 
@@ -184,4 +183,4 @@ DAYLOG_SMOKE_PI_AGENT_DIR=/absolute/pi-agent-dir \
 go test ./internal/athena -run TestOptInLunaSmoke -v
 ```
 
-No quality/recall or latency claim is established by the seven labeled examples. Installing into a fresh operational store, examining a shadow sample, growing to 30–50 labels, and enabling live remain explicit human cutover steps.
+The optional Luna checks exercise eight synthetic cases: a report without proof attachments, partial work, an attempted fix, routine noise, unclear and contradictory results, an overbroad claim, and a detailed handover that needs a short headline plus expandable details. Dispositions are checked automatically; emitted wording still needs human review. These small samples do not establish a general quality/recall or latency guarantee. Dry-run evaluation is optional, not an installation prerequisite.

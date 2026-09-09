@@ -27,6 +27,8 @@ public struct Entry: Decodable, Identifiable, Sendable {
     public let id: String
     public let type: String
     public let tldr: String
+    public let details: String?
+    public let tags: [String]?
     public let source: String
     public let display_at: String
     public let filed_at: String?
@@ -48,6 +50,11 @@ public struct Entry: Decodable, Identifiable, Sendable {
         formatter.dateFormat = "d.M.yyyy HH:mm"
         return formatter.string(from: date)
     }
+    public var references: [JournalReference] {
+        var seen = Set<String>()
+        return refs.filter { seen.insert($0).inserted }.compactMap(JournalReference.init)
+    }
+
     public var referenceURL: URL? {
         for ref in refs {
             guard ref.range(of: #"^gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*$"#,
@@ -55,6 +62,30 @@ public struct Entry: Decodable, Identifiable, Sendable {
             return URL(string: "https://" + ref.dropFirst(6).replacingOccurrences(of: "#", with: "/pull/"))
         }
         return nil
+    }
+}
+
+/// Athena selects supplied references; Swift owns safe destinations and rendering.
+public struct JournalReference: Identifiable, Sendable {
+    public let id: String
+    public let label: String
+    public let url: URL?
+
+    public init?(_ ref: String) {
+        id = ref
+        if ref.range(of: #"^gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*$"#,
+                     options: .regularExpression) != nil {
+            label = String(ref.split(separator: "/").last!)
+            url = URL(string: "https://" + ref.dropFirst(6).replacingOccurrences(of: "#", with: "/pull/"))
+        } else if ref.range(of: #"^linear:[A-Z][A-Z0-9]*-[1-9][0-9]*$"#, options: .regularExpression) != nil {
+            label = String(ref.dropFirst(7))
+            url = URL(string: "https://linear.app/issue/" + label)
+        } else if ref.range(of: #"^jira:[A-Z][A-Z0-9]*-[1-9][0-9]*$"#, options: .regularExpression) != nil {
+            label = String(ref.dropFirst(5))
+            url = nil // A Jira issue ID does not tell us the organization's host.
+        } else {
+            return nil
+        }
     }
 }
 

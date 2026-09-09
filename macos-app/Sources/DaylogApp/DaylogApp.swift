@@ -211,7 +211,7 @@ struct JournalPanel: View {
                         }
                         VStack(spacing: 6) {
                             ForEach(day.journalEntries.reversed()) { entry in
-                                entryCard(entry)
+                                JournalEntryCard(entry: entry)
                             }
                         }
                         Divider()
@@ -319,33 +319,6 @@ struct JournalPanel: View {
         }.foregroundStyle(.secondary)
     }
 
-    private func entryCard(_ entry: Entry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(entry.clock).monospacedDigit()
-                Text(entry.type == "todo" && entry.done == true ? "completed" : entry.type)
-                Spacer()
-                Text(entry.source)
-            }.font(.caption).foregroundStyle(.secondary)
-            HStack(alignment: .top, spacing: 8) {
-                if entry.type == "todo" && entry.done == true {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                Text(entry.tldr)
-                    .strikethrough(entry.type == "todo" && entry.done == true)
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            }
-            if entry.type == "todo", entry.done == true, let filed = entry.filedLabel {
-                Text("Filed \(filed)").font(.caption2).foregroundStyle(.secondary)
-            }
-            if let url = entry.referenceURL {
-                Link("Open referenced PR ↗", destination: url).font(.caption)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-    }
     private func saveNote() {
         let text = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !model.busy, model.day != nil else { return }

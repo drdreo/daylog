@@ -22,13 +22,33 @@ struct DaylogCoreChecks {
         tests.testCalendarMonthGrid()
         try tests.testCalendarIndex()
         try tests.testMergeReadyPRs()
-        print("Passed 10 Daylog core checks")
+        try tests.testJournalPresentationAndReferences()
+        print("Passed 11 Daylog core checks")
         if CommandLine.arguments.count == 2 {
             try await tests.testRealCLI(CommandLine.arguments[1])
             print("Passed real CLI scratch-store note/todo/completion checks")
             let current = try JournalDay.decode(await DaylogClient(binary: CommandLine.arguments[1], dataDirectory: "").run(["today", "--json"]))
             print("Current store decoded: \(current.entries.count) entries, \(current.open_todos.count) todos, \(current.prs.count) PRs (read-only)")
         }
+    }
+
+    func testJournalPresentationAndReferences() throws {
+        let old = #"{"id":"old","type":"work","tldr":"An older entry keeps its complete wording for expansion.","source":"agent:pi","display_at":"2026-09-09T12:00:00Z","refs":[]}"#
+        let legacy = try JSONDecoder().decode(Entry.self, from: Data(old.utf8))
+        XCTAssertEqual(legacy.details, nil)
+        XCTAssertEqual(legacy.tags, nil)
+        XCTAssertEqual(legacy.tldr, "An older entry keeps its complete wording for expansion.")
+
+        let json = #"{"id":"new","type":"work","tldr":"Narrowed the refresh race","details":"The attempted mutex fix still fails.\nCache invalidation needs investigation.","tags":["incomplete","imagegen"],"source":"agent:pi","display_at":"2026-09-09T12:00:00Z","refs":["gh:pr:github.com/owner/repo#42","linear:SCA-3825","jira:PROJ-1","gh:pr:github.com/owner/repo#42","file:///tmp/unsafe","javascript:alert(1)"]}"#
+        let entry = try JSONDecoder().decode(Entry.self, from: Data(json.utf8))
+        XCTAssertTrue(entry.details!.contains("still fails"))
+        XCTAssertEqual(entry.tags, ["incomplete", "imagegen"])
+        XCTAssertEqual(entry.references.map(\.label), ["repo#42", "SCA-3825", "PROJ-1"])
+        XCTAssertEqual(entry.references[0].url?.absoluteString, "https://github.com/owner/repo/pull/42")
+        XCTAssertEqual(entry.references[1].url?.absoluteString, "https://linear.app/issue/SCA-3825")
+        XCTAssertEqual(entry.references[2].url, nil)
+        XCTAssertEqual(JournalReference("gh:pr:github.com@evil.example/o/r#1")?.url, nil)
+        XCTAssertEqual(JournalReference("linear:../escape")?.url, nil)
     }
 
     func testCalendarMonthGrid() {

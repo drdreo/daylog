@@ -8,10 +8,11 @@ import (
 	"github.com/drdreo/daylog/internal/capture"
 	"github.com/drdreo/daylog/internal/event"
 	"strings"
+	"unicode/utf8"
 )
 
 const Version = 2
-const PolicyVersion = "athena-v2.1"
+const PolicyVersion = "athena-v2.3"
 
 type Preference struct {
 	Entry  string `json:"entry"`
@@ -19,12 +20,13 @@ type Preference struct {
 	Reason string `json:"reason"`
 }
 type Input struct {
-	Version     int                 `json:"version"`
-	Policy      string              `json:"policy"`
-	Candidates  []capture.Candidate `json:"candidates"`
-	Evidence    []capture.Evidence  `json:"evidence"`
-	Outcomes    []event.Entry       `json:"outcomes"`
-	Preferences []Preference        `json:"preferences"`
+	Version        int                 `json:"version"`
+	Policy         string              `json:"policy"`
+	Candidates     []capture.Candidate `json:"candidates"`
+	Evidence       []capture.Evidence  `json:"evidence"`
+	Outcomes       []event.Entry       `json:"outcomes"`
+	Preferences    []Preference        `json:"preferences"`
+	PreviousErrors []string            `json:"previous_errors,omitempty"`
 }
 type Action struct {
 	Kind       string         `json:"kind"`
@@ -33,6 +35,8 @@ type Action struct {
 	Targets    []event.Target `json:"targets"`
 	Type       string         `json:"type,omitempty"`
 	Text       string         `json:"text,omitempty"`
+	Details    string         `json:"details,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
 	Refs       []string       `json:"refs"`
 	Reason     string         `json:"reason"`
 }
@@ -177,7 +181,7 @@ func Validate(in Input, out Output) error {
 				return fmt.Errorf("invalid merge")
 			}
 		case "skip", "hold":
-			if a.Text != "" || a.Type != "" || len(a.Refs) != 0 || len(a.Targets) > 1 {
+			if a.Text != "" || a.Details != "" || len(a.Tags) != 0 || a.Type != "" || len(a.Refs) != 0 || len(a.Targets) > 1 {
 				return fmt.Errorf("invalid disposition")
 			}
 			if a.Kind == "hold" && len(a.Targets) != 0 {
@@ -188,6 +192,12 @@ func Validate(in Input, out Output) error {
 		}
 		if !terminal {
 			if err := event.ValidateTLDR(a.Text); err != nil {
+				return err
+			}
+			if utf8.RuneCountInString(a.Text) > event.MaxHeadlineChars {
+				return fmt.Errorf("headline exceeds %d characters; move explanation into details", event.MaxHeadlineChars)
+			}
+			if err := event.ValidatePresentation(a.Details, a.Tags); err != nil {
 				return err
 			}
 		}
