@@ -23,7 +23,7 @@ struct TodoRow: View {
                     ProgressView().controlSize(.small)
                 } else if isCompleted {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .green)
                         .accessibilityLabel("Completed")
@@ -34,7 +34,7 @@ struct TodoRow: View {
                 } else {
                     Button { perform("done") } label: {
                         Image(systemName: "circle")
-                            .font(.system(size: 20, weight: .regular))
+                            .font(.system(size: 16, weight: .regular))
                             .foregroundStyle(hovering && !busy ? Color.accentColor : Color.secondary)
                             .frame(width: 24, height: 24)
                             .contentShape(Rectangle())
