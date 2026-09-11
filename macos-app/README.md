@@ -18,6 +18,8 @@ The calendar loads entry counts with one `daylog days YYYY-MM --json` call per d
 
 The app shells out via `Process` argument arrays, not a shell. Every command carries the configured store and a human widget identity, with inherited agent attribution removed. No queue or raw ledger reads happen in Swift. Each call times out after 60 seconds; after a timeout, refresh before retrying a write because it may already have committed.
 
+Open PRs with matching base/head branches are grouped into **PR stack** cards, base first, with a connector rail and explicit “Based on #…” labels. Matches require the same GitHub host and target repository, and the parent's head repository must match the child's target repository (fork branch names alone are not enough). This is inferred from fetched open PRs authored by you within the configured scope, not GitHub/Graphite stack metadata or PR-body links; missing members cannot be shown. Older snapshots remain flat until you install the updated CLI and refresh GitHub PRs.
+
 ## Replace SwiftBar locally
 
 Once the native app works, move just `daylog.1m.js` out of SwiftBar's plugin folder (find it with `defaults read com.ameba.SwiftBar PluginDirectory`). Keep a backup for rollback. Quit SwiftBar if you have no other plugins. The build script deliberately does not change SwiftBar or login items.

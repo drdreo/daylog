@@ -9,6 +9,7 @@ public struct JournalDay: Decodable, Sendable {
     public let needs_triage: [Entry]
     public let prs: [PullRequest]
     public let prs_fetched_at: String?
+    public var prGroups: [PullRequestGroup] { PullRequestGroup.group(prs) }
 
     // The CLI already scopes entries (including completions) to the selected day.
     public var completedTodos: [Entry] { entries.filter { $0.type == "todo" && $0.done == true }.reversed() }
@@ -97,6 +98,9 @@ public struct PullRequest: Decodable, Identifiable, Sendable {
     public let checks: String
     public let review: String
     public let draft: Bool
+    public let base_branch: String?
+    public let head_branch: String?
+    public let head_repo: String?
     public var id: String { url }
     public var safeURL: URL? {
         guard let value = URL(string: url), value.scheme == "https", value.host != nil else { return nil }

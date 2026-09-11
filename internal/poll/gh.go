@@ -226,6 +226,11 @@ type ghSearchItem struct {
 
 // ghPRView is the per-PR detail from `gh pr view --json`.
 type ghPRView struct {
+	BaseRefName    string `json:"baseRefName"`
+	HeadRefName    string `json:"headRefName"`
+	HeadRepository struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"headRepository"`
 	State             string        `json:"state"` // OPEN | MERGED | CLOSED
 	IsDraft           bool          `json:"isDraft"`
 	Title             string        `json:"title"`
@@ -302,7 +307,7 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 	}
 	for _, k := range order {
 		out, err := ghRun("pr", "view", fmt.Sprint(k.number), "--repo", k.repo,
-			"--json", "state,isDraft,title,url,reviewDecision,statusCheckRollup,updatedAt")
+			"--json", "state,isDraft,title,url,reviewDecision,statusCheckRollup,updatedAt,baseRefName,headRefName,headRepository")
 		if err != nil {
 			return nil, filter, err
 		}
@@ -319,16 +324,19 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 		}
 		ref := fmt.Sprintf("gh:pr:%s/%s#%d", strings.ToLower(prURL.Hostname()), k.repo, k.number)
 		cur.PRs[ref] = snapshot.PR{
-			Ref:       ref,
-			Repo:      k.repo,
-			Number:    k.number,
-			Title:     v.Title,
-			URL:       v.URL,
-			State:     strings.ToLower(v.State),
-			Draft:     v.IsDraft,
-			Checks:    checksFrom(v.StatusCheckRollup),
-			Review:    reviewFrom(v.ReviewDecision),
-			UpdatedAt: v.UpdatedAt,
+			Ref:        ref,
+			Repo:       k.repo,
+			Number:     k.number,
+			Title:      v.Title,
+			URL:        v.URL,
+			State:      strings.ToLower(v.State),
+			Draft:      v.IsDraft,
+			Checks:     checksFrom(v.StatusCheckRollup),
+			Review:     reviewFrom(v.ReviewDecision),
+			UpdatedAt:  v.UpdatedAt,
+			BaseBranch: v.BaseRefName,
+			HeadBranch: v.HeadRefName,
+			HeadRepo:   v.HeadRepository.NameWithOwner,
 		}
 	}
 	return cur, filter, nil

@@ -15,16 +15,19 @@ import (
 
 // PR is the current truth about one pull request, keyed by its typed ref.
 type PR struct {
-	Ref       string `json:"ref"`  // gh:pr:github.com/owner/repo#142
-	Repo      string `json:"repo"` // owner/repo
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	URL       string `json:"url"`
-	State     string `json:"state"` // open | merged | closed
-	Draft     bool   `json:"draft"`
-	Checks    string `json:"checks"` // passing | failing | pending | none
-	Review    string `json:"review"` // approved | changes_requested | review_required | none
-	UpdatedAt string `json:"updated_at"`
+	Ref        string `json:"ref"`  // gh:pr:github.com/owner/repo#142
+	Repo       string `json:"repo"` // owner/repo
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	State      string `json:"state"` // open | merged | closed
+	Draft      bool   `json:"draft"`
+	Checks     string `json:"checks"` // passing | failing | pending | none
+	Review     string `json:"review"` // approved | changes_requested | review_required | none
+	UpdatedAt  string `json:"updated_at"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	HeadBranch string `json:"head_branch,omitempty"`
+	HeadRepo   string `json:"head_repo,omitempty"` // owner/repo; may differ for forks
 }
 
 // GHPRs is the document in <data>/state/gh-prs.json. FetchedAt is the

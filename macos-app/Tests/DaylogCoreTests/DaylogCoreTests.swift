@@ -23,13 +23,48 @@ struct DaylogCoreChecks {
         try tests.testCalendarIndex()
         try tests.testMergeReadyPRs()
         try tests.testJournalPresentationAndReferences()
-        print("Passed 11 Daylog core checks")
+        try tests.testPRStacks()
+        print("Passed 12 Daylog core checks")
         if CommandLine.arguments.count == 2 {
             try await tests.testRealCLI(CommandLine.arguments[1])
             print("Passed real CLI scratch-store note/todo/completion checks")
             let current = try JournalDay.decode(await DaylogClient(binary: CommandLine.arguments[1], dataDirectory: "").run(["today", "--json"]))
             print("Current store decoded: \(current.entries.count) entries, \(current.open_todos.count) todos, \(current.prs.count) PRs (read-only)")
         }
+    }
+
+    func testPRStacks() throws {
+        func pr(_ number: Int, _ base: String? = nil, _ head: String? = nil,
+                repo: String = "o/r", headRepo: String = "o/r", host: String = "github.com") throws -> PullRequest {
+            var value: [String: Any] = ["repo": repo, "number": number, "title": "PR",
+                "url": "https://\(host)/\(repo)/pull/\(number)", "draft": false,
+                "checks": "passing", "review": "approved"]
+            value["base_branch"] = base
+            value["head_branch"] = head
+            if head != nil { value["head_repo"] = headRepo }
+            return try JSONDecoder().decode(PullRequest.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        let root = try pr(1, "main", "a")
+        let child = try pr(2, "a", "b")
+        let tip = try pr(3, "b", "c")
+        let standalone = try pr(4)
+        let groups = PullRequestGroup.group([tip, standalone, child, root])
+        XCTAssertEqual(groups.map { $0.rows.map { $0.pr.number } }, [[1, 2, 3], [4]])
+        XCTAssertEqual(groups[0].rows.map(\.parentNumber), [nil, 1, 2])
+        XCTAssertTrue(groups[0].isStack)
+        XCTAssertTrue(!groups[1].isStack)
+        XCTAssertTrue(PullRequestGroup.group([]).isEmpty)
+        let sibling = try pr(5, "a", "d")
+        XCTAssertEqual(PullRequestGroup.group([root, child, sibling])[0].rows.map(\.parentNumber), [nil, 1, 1])
+        // Same branch name is insufficient across repos, hosts, forks, or ambiguous heads.
+        for other in [try pr(6, "a", "z", repo: "other/r"),
+                      try pr(6, "a", "z", host: "github.example.com")] {
+            XCTAssertEqual(PullRequestGroup.group([root, other]).count, 2)
+        }
+        XCTAssertEqual(PullRequestGroup.group([try pr(1, "main", "a", headRepo: "fork/r"), child]).count, 2)
+        XCTAssertEqual(PullRequestGroup.group([root, try pr(6, "main", "a"), child]).count, 3)
+        XCTAssertEqual(PullRequestGroup.group([try pr(1, "b", "a"), child]).count, 2)
+        XCTAssertEqual(PullRequestGroup.group([standalone, try pr(7)]).count, 2)
     }
 
     func testJournalPresentationAndReferences() throws {

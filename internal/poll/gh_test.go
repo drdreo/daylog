@@ -240,7 +240,7 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 	tempDataDir(t)
 	stubGH(t, map[string]string{
 		"search prs":           `[{"number":7,"repository":{"nameWithOwner":"o/r"}}]`,
-		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"https://github.com/o/r/pull/7","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x"}`,
+		"pr view 7 --repo o/r": `{"state":"OPEN","isDraft":true,"title":"T","url":"https://github.com/o/r/pull/7","reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"updatedAt":"x","baseRefName":"main","headRefName":"feature","headRepository":{"nameWithOwner":"fork/r"}}`,
 	}, nil)
 	now, _ := time.Parse(time.RFC3339, "2026-08-23T12:00:00Z")
 	cur, _, err := fetchGHPRs(now, ownerFilter{})
@@ -252,7 +252,8 @@ func TestFetchParsesSearchAndView(t *testing.T) {
 	}
 	got := cur.PRs["gh:pr:github.com/o/r#7"]
 	want := snapshot.PR{Ref: "gh:pr:github.com/o/r#7", Repo: "o/r", Number: 7, Title: "T", URL: "https://github.com/o/r/pull/7",
-		State: "open", Draft: true, Checks: "pending", Review: "none", UpdatedAt: "x"}
+		State: "open", Draft: true, Checks: "pending", Review: "none", UpdatedAt: "x",
+		BaseBranch: "main", HeadBranch: "feature", HeadRepo: "fork/r"}
 	if got != want {
 		t.Errorf("PR = %+v, want %+v", got, want)
 	}

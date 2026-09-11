@@ -246,8 +246,8 @@ struct JournalPanel: View {
                         .accessibilityLabel("Refresh GitHub pull requests")
                         if day.prs.isEmpty { Text("No open PRs in the snapshot.").foregroundStyle(.secondary) }
                         VStack(spacing: 6) {
-                            ForEach(day.prs) { pr in
-                                PullRequestCard(pr: pr)
+                            ForEach(day.prGroups) { group in
+                                PullRequestGroupCard(group: group)
                             }
                         }
                     } else if model.busy {
