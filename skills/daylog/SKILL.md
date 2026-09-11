@@ -1,11 +1,19 @@
 ---
 name: daylog
-description: Give Athena a brief work handover—what changed or was learned, checks actually performed, and important limitations. Athena turns private reports into useful journal entries.
+description: Use proactively after implementing, investigating, reviewing, or completing a meaningful work segment, without waiting for a logging request. Before the final response, submit a brief factual handover using daylog add and confirm capture was acknowledged. Athena decides journal relevance.
 ---
 
 # Give Athena a work handover
 
-After a task or meaningful segment of work, give a brief handover, not a polished headline or a certification. A few natural sentences are usually enough:
+## When and how to report
+
+Use this skill proactively after implementation, investigation, review, or another meaningful work segment, even when the user did not ask to log. Before the final response for that segment, execute `daylog add` with a brief factual handover; a chat summary is not a submitted report. Report partial results and useful read-only findings too. Do not wait for a commit, PR, deployment, perfect result, or end of session.
+
+Confirm the command succeeded and returned `queued <candidate-id>`. That acknowledges private capture, not journal publication; do not run curation or wait for publication. If the CLI is unavailable or capture fails, briefly tell the user instead of claiming it was logged. Respect explicit no-logging instructions and tool restrictions; never bypass them or impersonate a human. Skip pure conversation and status-only replies with no new work or finding, and do not resubmit an already acknowledged handover unless there is a new delta.
+
+## What to include
+
+Give a brief handover, not a polished headline or a certification. A few natural sentences are usually enough:
 
 - What changed, was attempted, or was learned? Include useful context or a decision's rationale when it helps explain the result.
 - What checks did you actually perform, and what did they show?

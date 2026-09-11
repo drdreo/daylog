@@ -8,6 +8,16 @@ For harnesses without skill discovery, use this block:
 ```markdown
 ## Work reporting (daylog)
 
+After implementation, investigation, review, or another meaningful work segment,
+proactively load the daylog skill and execute `daylog add` before your final
+response, even when the user did not ask to log. A chat summary is not a submitted
+report. Include partial results and useful read-only findings; do not wait for a
+commit, deployment, or perfect result. Confirm `queued <candidate-id>`; if capture
+fails or the CLI is unavailable, briefly disclose that rather than claiming it
+was logged. Do not run curation or wait for publication. Respect explicit
+no-logging instructions and tool restrictions. Skip pure conversation/status-only
+replies and do not duplicate acknowledged reports without a new delta.
+
 Give a brief work handover, not a polished headline or a certification:
 
     daylog add --type <work|sidequest|note> --ref '#142' "factual report"
