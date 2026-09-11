@@ -46,6 +46,7 @@ daylog add --type todo "Check the release plan"
 daylog accept ENTRY                       # adopt an agent proposal
 daylog decline ENTRY --note "Not needed"
 daylog done ENTRY --note "Verified locally"
+daylog reopen ENTRY                         # undo completion; human only
 daylog amend ENTRY "Corrected wording"    # pins wording against automation
 daylog amend ENTRY "Reclassified outcome" --type work
 daylog dismiss ENTRY --reason too-minor
@@ -117,7 +118,7 @@ daylog setup --schedule              # write resources only
 daylog setup --schedule --activate   # explicit scheduler registration/start
 ```
 
-The generated one-shot job runs `daylog --data-dir ABSOLUTE tick`, which attempts reconciliation then curation. Platform resources are launchd on macOS, systemd user units on Linux, and Task Scheduler XML on Windows. No scheduler or integrations are installed by `install.sh` alone.
+The generated one-shot job runs `daylog --data-dir ABSOLUTE tick`, which runs reconciliation and curation alongside independently throttled GitHub snapshot polling. Platform resources are launchd on macOS, systemd user units on Linux, and Task Scheduler XML on Windows. No scheduler or integrations are installed by `install.sh` alone.
 
 - [macOS launchd](docs/launchd/README.md)
 - [Linux systemd](docs/systemd/README.md)
@@ -149,6 +150,8 @@ Ledger corruption blocks publication, including dedup retries. `repair-tail` onl
 daylog poll gh                         # requires authenticated gh CLI
 daylog poll gh --owner 'myorg,!oldorg'
 ```
+
+With the scheduled worker active, GitHub PRs refresh automatically every **5 minutes**, even while the macOS panel is closed. Set `github_poll_seconds` in `<data>/config.json` to change the interval (60–86400 seconds), or `0` to disable automatic polling. Existing configs default to 300 seconds. Failed attempts are throttled too and retain the previous snapshot timestamp; each scheduled fetch is bounded to two minutes. Manual `poll gh` and the app's refresh button remain immediate. Scheduled runs use the PATH captured by `setup` to locate `gh` and its existing authentication, independently of Athena's model budget or queue state.
 
 Configure machine scope with `github_owners` in config, `DAYLOG_GH_OWNERS`, or `--owner` (flag wins). Open PRs remain a **separate current-state snapshot**, never journal work. Snapshot PRs use their own `repo` display label and provider URLs; narrative context uses structured repository identity.
 

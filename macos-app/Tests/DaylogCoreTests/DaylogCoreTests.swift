@@ -209,7 +209,8 @@ struct DaylogCoreChecks {
         XCTAssertEqual(day.entries.first?.tldr, text)
         XCTAssertEqual(day.entries.first?.source, "human:widget")
         XCTAssertEqual(day.open_todos.count, 1)
-        _ = try await client.run(["done", day.open_todos[0].id, "--source", "human:widget"])
+        let todoID = day.open_todos[0].id
+        _ = try await client.run(["done", todoID, "--source", "human:widget"])
         day = try JournalDay.decode(await client.run(["today", "--json"]))
         XCTAssertTrue(day.open_todos.isEmpty)
         XCTAssertTrue(day.entries.contains { $0.done == true && $0.filed_at != nil })
@@ -217,6 +218,16 @@ struct DaylogCoreChecks {
         let summary = try JournalMonthSummary.decode(await client.run(["days", monthKey, "--json"]), expectedMonth: monthKey)
         XCTAssertEqual(summary.days.first?.date, day.date)
         XCTAssertEqual(summary.days.first?.count, day.entries.count)
+        _ = try await client.run(["reopen", todoID, "--source", "human:widget"])
+        day = try JournalDay.decode(await client.run(["today", "--json"]))
+        XCTAssertEqual(day.open_todos.map(\.id), [todoID])
+        XCTAssertTrue(day.completedTodos.isEmpty)
+        XCTAssertEqual(day.open_todos[0].display_at, day.open_todos[0].filed_at)
+        let reopenedSummary = try JournalMonthSummary.decode(await client.run(["days", monthKey, "--json"]), expectedMonth: monthKey)
+        XCTAssertEqual(reopenedSummary.days.first?.count, 1)
+        _ = try await client.run(["done", todoID, "--source", "human:widget"])
+        day = try JournalDay.decode(await client.run(["today", "--json"]))
+        XCTAssertEqual(day.completedTodos.map(\.id), [todoID])
     }
 
     func testViewContractAndCapturedClock() throws {

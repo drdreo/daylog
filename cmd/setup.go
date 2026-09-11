@@ -7,6 +7,7 @@ import (
 	"github.com/drdreo/daylog/internal/capture"
 	"github.com/drdreo/daylog/internal/capture/adapters"
 	"github.com/drdreo/daylog/internal/config"
+	"github.com/drdreo/daylog/internal/poll"
 	"github.com/drdreo/daylog/internal/setup"
 	"github.com/drdreo/daylog/internal/store"
 	"github.com/spf13/cobra"
@@ -179,7 +180,7 @@ func init() {
 	c.Flags().BoolVar(&activate, "activate", false, "explicitly start/register the scheduled worker")
 	c.Flags().BoolVar(&uninstall, "uninstall-resources", false, "remove owned integrations/resources, retain all data")
 	rootCmd.AddCommand(c)
-	rootCmd.AddCommand(&cobra.Command{Use: "tick", Short: "Scheduled bounded reconciliation followed by curation", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	rootCmd.AddCommand(&cobra.Command{Use: "tick", Short: "Scheduled reconciliation, curation, and GitHub snapshots", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
@@ -188,12 +189,33 @@ func init() {
 		if err != nil {
 			return err
 		}
+		// launchd starts with a minimal PATH. Use the executable search path
+		// captured by setup, just as the configured Athena runner does.
+		if cfg.Runner.Path != "" {
+			if err := os.Setenv("PATH", cfg.Runner.Path); err != nil {
+				return err
+			}
+		}
+		owners := cfg.GHOwners
+		if override, ok := os.LookupEnv("DAYLOG_GH_OWNERS"); ok {
+			owners = override
+		}
+		type ghResult struct {
+			result poll.ScheduledResult
+			err    error
+		}
+		ghDone := make(chan ghResult, 1)
+		go func() {
+			result, err := poll.ScheduledGH(cmd.Context(), time.Now(), time.Duration(cfg.GHPollSeconds)*time.Second, owners)
+			ghDone <- ghResult{result, err}
+		}()
 		scan, se := adapters.Reconcile(q, cfg, time.Now())
 		w := athena.Worker{Queue: q, Config: cfg, Runner: athena.PiRunner{Config: cfg.Runner}}
 		res, we := w.Once(cmd.Context(), false)
-		if err := printJSON(cmd, map[string]any{"reconcile": scan, "curate": res}); err != nil {
+		gh := <-ghDone
+		if err := printJSON(cmd, map[string]any{"reconcile": scan, "curate": res, "github": gh.result}); err != nil {
 			return err
 		}
-		return errors.Join(se, we)
+		return errors.Join(se, we, gh.err)
 	}})
 }

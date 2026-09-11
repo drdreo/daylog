@@ -9,7 +9,7 @@ plutil -lint "$HOME/Library/LaunchAgents/dev.daylog.athena.plist"
 daylog --data-dir "$HOME/daylog-v2" setup --schedule --activate
 ```
 
-The generated user LaunchAgent wakes every 60 seconds and runs the absolute binary with `--data-dir ... tick`. Reconciliation and curation are one-shot; OS locking serializes worker instances. Machine config contains pi/PATH, so no interactive shell profile is needed. Output/error logs are private under the store; rotate them manually if needed.
+The generated user LaunchAgent wakes every 60 seconds and runs the absolute binary with `--data-dir ... tick`. Reconciliation and curation are one-shot; OS locking serializes worker instances. Each tick also checks whether a GitHub PR poll is due (every 300 seconds by default), concurrently with Athena. This works with the macOS panel closed. Set `github_poll_seconds` in the store config to 0 to disable automatic PR polling or 60–86400 to change the interval. Failed attempts are throttled and leave the old snapshot intact; manual refresh still works immediately. Machine config contains pi/PATH, so no interactive shell profile is needed. Output/error logs are private under the store; rotate them manually if needed.
 
 Inspect/pause:
 

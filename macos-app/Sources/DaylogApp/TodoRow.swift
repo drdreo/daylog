@@ -1,7 +1,7 @@
 import SwiftUI
 import DaylogCore
 
-/// Todos are tasks, not journal entries: checkbox first, task text second.
+/// The main row is one accessible button; proposal controls and links stay independent.
 struct TodoRow: View {
     let entry: Entry
     let needsTriage: Bool
@@ -9,14 +9,50 @@ struct TodoRow: View {
     let onAction: (String) async -> Bool
     @State private var submitting = false
     @State private var hovering = false
-    @State private var completed = false
+    @State private var completionOverride: Bool?
     @State private var accepted = false
     @State private var declined = false
 
-    private var isCompleted: Bool { completed || entry.done == true }
+    private var isCompleted: Bool { completionOverride ?? (entry.done == true) }
     private var isProposal: Bool { needsTriage && !accepted && !isCompleted }
+    private var toggleCommand: String { isCompleted ? "reopen" : "done" }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isProposal {
+                rowContent
+                if !declined {
+                    HStack(spacing: 6) {
+                        Spacer()
+                        Button("Decline") { perform("decline") }
+                        Button("Accept") { perform("accept") }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.small)
+                    .disabled(busy || submitting)
+                    .padding(.horizontal, 14).padding(.bottom, 12)
+                }
+            } else {
+                Button { perform(toggleCommand) } label: { rowContent }
+                    .buttonStyle(.plain)
+                    .disabled(busy || submitting || declined)
+                    .accessibilityLabel("\(isCompleted ? "Reopen" : "Complete") \(entry.tldr)")
+                    .help(isCompleted ? "Mark as not done" : "Mark done")
+            }
+            if let url = entry.referenceURL {
+                Link(destination: url) {
+                    Label("Referenced PR", systemImage: "arrow.up.right.square")
+                }
+                .font(.caption).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                .padding(.leading, 44).padding(.bottom, 12)
+            }
+        }
+        .background(hovering && !busy ? Color.primary.opacity(0.035) : Color.clear)
+        .onHover { hovering = $0 }
+        .onChange(of: entry.done) { _ in completionOverride = nil }
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .top, spacing: 10) {
             Group {
                 if submitting {
@@ -26,23 +62,14 @@ struct TodoRow: View {
                         .font(.system(size: 16, weight: .medium))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .green)
-                        .accessibilityLabel("Completed")
                 } else if isProposal {
                     Image(systemName: declined ? "xmark.circle" : "circle.dashed")
                         .foregroundStyle(.orange)
                         .help("Accept this proposal before completing it")
                 } else {
-                    Button { perform("done") } label: {
-                        Image(systemName: "circle")
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundStyle(hovering && !busy ? Color.accentColor : Color.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Complete \(entry.tldr)")
-                    .help("Mark done")
-                    .disabled(busy)
+                    Image(systemName: "circle")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(hovering && !busy ? Color.accentColor : Color.secondary)
                 }
             }
             .frame(width: 20, height: 20)
@@ -57,18 +84,8 @@ struct TodoRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isProposal {
-                    HStack(spacing: 6) {
-                        Text(declined ? "Declined" : "Suggested by \(entry.source.split(separator: ":").last.map(String.init) ?? entry.source)")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
-                        if !declined {
-                            Button("Decline") { perform("decline") }
-                            Button("Accept") { perform("accept") }
-                                .buttonStyle(.borderedProminent)
-                        }
-                    }
-                    .controlSize(.small)
-                    .disabled(busy || submitting)
+                    Text(declined ? "Declined" : "Suggested by \(entry.source.split(separator: ":").last.map(String.init) ?? entry.source)")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else if isCompleted {
                     Text(completionDetails)
                         .font(.caption2).foregroundStyle(.secondary)
@@ -77,18 +94,10 @@ struct TodoRow: View {
                 } else if let filed = olderFilingDay {
                     Text("Added \(filed)").font(.caption).foregroundStyle(.secondary)
                 }
-
-                if let url = entry.referenceURL {
-                    Link(destination: url) {
-                        Label("Referenced PR", systemImage: "arrow.up.right.square")
-                    }
-                    .font(.caption).buttonStyle(.plain).foregroundStyle(Color.accentColor)
-                }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(hovering ? Color.primary.opacity(0.035) : Color.clear)
-        .onHover { hovering = $0 }
+        .contentShape(Rectangle())
     }
 
     private var completionDetails: String {
@@ -107,12 +116,17 @@ struct TodoRow: View {
     }
 
     private func perform(_ command: String) {
-        guard !busy, !submitting, !isCompleted, !declined else { return }
+        guard !busy, !submitting, !declined else { return }
+        if isProposal {
+            guard command == "accept" || command == "decline" else { return }
+        } else {
+            guard command == toggleCommand else { return }
+        }
         submitting = true
         Task { @MainActor in
             if await onAction(command) {
-                // Keep a successful write reflected even if the follow-up read failed.
-                completed = command == "done"
+                // Reflect a saved write even if the follow-up read failed, in either direction.
+                if command == "done" || command == "reopen" { completionOverride = command == "done" }
                 accepted = accepted || command == "accept"
                 declined = command == "decline"
             }

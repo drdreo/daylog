@@ -31,7 +31,9 @@ var pollGHCmd = &cobra.Command{
 	Long: `Track every open PR you authored via the gh CLI (which supplies auth).
 The current snapshot goes to <data>/state/gh-prs.json and powers the separate
 Open PRs section. PR lifecycle, checks, and review state never become work-log
-events. Timer units to run this periodically are in docs/systemd/.
+events. The scheduled tick refreshes this every five minutes by default;
+github_poll_seconds in config controls the interval (0 disables it).
+This manual command refreshes immediately regardless of that interval.
 
 One machine is rarely one context, so --owner (repeatable, or a comma-
 separated list) narrows the poll to certain repository owners; $DAYLOG_GH_OWNERS

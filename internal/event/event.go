@@ -23,6 +23,7 @@ const (
 	TypeNote        = "note"
 	TypeTodo        = "todo"
 	TypeDone        = "done"
+	TypeReopen      = "reopen"
 	TypeTriage      = "triage"
 	TypeAmend       = "amend"
 	TypeDismiss     = "dismiss"
@@ -250,7 +251,7 @@ func (e Event) Validate() error {
 			return fmt.Errorf("amend cannot create obligations")
 		}
 		fallthrough
-	case TypeDone, TypeTriage, TypeDismiss, TypeRestore:
+	case TypeDone, TypeReopen, TypeTriage, TypeDismiss, TypeRestore:
 		n := 1
 		if e.Type == TypeMerge {
 			n = 2
@@ -265,7 +266,7 @@ func (e Event) Validate() error {
 			}
 			seen[t.ID] = true
 		}
-		if (e.Type == TypeDone || e.Type == TypeTriage || e.Type == TypeDismiss || e.Type == TypeRestore) && !Human(e.Source) {
+		if (e.Type == TypeDone || e.Type == TypeReopen || e.Type == TypeTriage || e.Type == TypeDismiss || e.Type == TypeRestore) && !Human(e.Source) {
 			return fmt.Errorf("operation requires human source")
 		}
 		if e.Type == TypeTriage {
@@ -313,6 +314,10 @@ func Effective(all []Event) map[string]Entry {
 				en.Done = true
 				en.DisplayAt = e.OccurredAt
 				en.DoneNote = e.TLDR
+			case TypeReopen:
+				en.Done = false
+				en.DisplayAt = en.FiledAt
+				en.DoneNote = ""
 			case TypeTriage:
 				en.Verdict = e.Verdict
 			case TypeMerge:
@@ -376,11 +381,14 @@ func CheckTargets(e Event, current map[string]Entry) error {
 		if !Human(e.Source) && (Human(en.Source) || en.Pinned || en.Dismissed || en.Type == TypeTodo) {
 			return fmt.Errorf("target %s is human-protected", t.ID)
 		}
-		if (e.Type == TypeDone || e.Type == TypeTriage) && en.Type != TypeTodo {
+		if (e.Type == TypeDone || e.Type == TypeReopen || e.Type == TypeTriage) && en.Type != TypeTodo {
 			return fmt.Errorf("only todos have lifecycle operations")
 		}
 		if e.Type == TypeDone && (en.Done || en.Verdict == VerdictDeclined || (!Human(en.Source) && en.Verdict != VerdictAccepted)) {
 			return fmt.Errorf("todo must be adopted and open before completion")
+		}
+		if e.Type == TypeReopen && !en.Done {
+			return fmt.Errorf("todo must be completed before reopening")
 		}
 		if (e.Type == TypeAmend || e.Type == TypeMerge || e.Type == TypeDismiss || e.Type == TypeRestore) && !Narrative(en.Type) {
 			return fmt.Errorf("narrative correction requires narrative targets")

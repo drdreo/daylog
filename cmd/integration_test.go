@@ -117,6 +117,22 @@ func TestHumanCorrectionsUseEffectiveStateAndTodos(t *testing.T) {
 	if e != nil || !strings.Contains(out, `"display_at"`) || !strings.Contains(out, `"done": true`) || strings.Contains(out, `"ts"`) {
 		t.Fatal(out, e)
 	}
+	if _, e := runCLI(t, home, "agent:pi", "reopen", todo); e == nil {
+		t.Fatal("agent reopened obligation")
+	}
+	if out, e := runCLI(t, home, "human:widget", "reopen", todo); e != nil {
+		t.Fatal(out, e)
+	}
+	out, e = runCLI(t, home, "human:cli", "today", "--json")
+	if e != nil || strings.Contains(out, `"done": true`) || !strings.Contains(out, `"verdict": "accepted"`) {
+		t.Fatal(out, e)
+	}
+	if _, e := runCLI(t, home, "human:cli", "reopen", todo); e == nil {
+		t.Fatal("open todo reopened")
+	}
+	if out, e := runCLI(t, home, "human:cli", "done", todo); e != nil {
+		t.Fatal(out, e)
+	}
 }
 func TestConcurrentProducerProcesses(t *testing.T) {
 	home := t.TempDir()

@@ -35,6 +35,7 @@ type Config struct {
 	Version               int      `json:"version"`
 	Mode                  string   `json:"mode"`
 	GHOwners              string   `json:"github_owners"`
+	GHPollSeconds         int      `json:"github_poll_seconds"` // 0 disables scheduled polling
 	Runner                Runner   `json:"runner"`
 	QuietSeconds          int      `json:"quiet_seconds"`
 	MaxWaitSeconds        int      `json:"max_wait_seconds"`
@@ -45,7 +46,7 @@ type Config struct {
 }
 
 func Defaults() Config {
-	return Config{Version: Version, Mode: "live", Runner: Runner{Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CloudProjects: []string{}, CaptureScopes: []Scope{}}
+	return Config{Version: Version, Mode: "live", GHPollSeconds: 300, Runner: Runner{Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CloudProjects: []string{}, CaptureScopes: []Scope{}}
 }
 func Path() (string, error) { r, e := store.DataDir(); return filepath.Join(r, "config.json"), e }
 func Load() (Config, error) {
@@ -84,6 +85,9 @@ func (c Config) Validate() error {
 	// New installs are live; preview is now a per-invocation CLI flag.
 	if c.Mode != "shadow" && c.Mode != "live" {
 		return fmt.Errorf("mode must be shadow or live")
+	}
+	if c.GHPollSeconds != 0 && (c.GHPollSeconds < 60 || c.GHPollSeconds > 86400) {
+		return fmt.Errorf("github_poll_seconds must be 0 (disabled) or 60..86400")
 	}
 	r := c.Runner
 	if len(r.Arguments) > 16 {

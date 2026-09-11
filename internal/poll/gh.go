@@ -7,6 +7,7 @@
 package poll
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +27,13 @@ import (
 // unauthenticated is an honest skip, not a corruption (§6). A var so tests
 // can stub it.
 var ghRun = func(args ...string) ([]byte, error) {
-	out, err := exec.Command("gh", args...).Output()
+	return runGHCommand(context.Background(), args...)
+}
+
+func runGHCommand(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "gh", args...).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
@@ -127,10 +134,14 @@ func (f ownerFilter) allows(repo string) bool {
 // resolveSelf expands the @me token to the authenticated login. Costs one
 // extra gh call, and only when the spec actually uses the token.
 func (f ownerFilter) resolveSelf() (ownerFilter, error) {
+	return f.resolveSelfWithRunner(ghRun)
+}
+
+func (f ownerFilter) resolveSelfWithRunner(run func(...string) ([]byte, error)) (ownerFilter, error) {
 	if !f.usesSelf() {
 		return f, nil
 	}
-	out, err := ghRun("api", "user", "--jq", ".login")
+	out, err := run("api", "user", "--jq", ".login")
 	if err != nil {
 		return ownerFilter{}, err
 	}
@@ -177,6 +188,10 @@ func (f ownerFilter) String() string {
 // narrows which repository owners are tracked (see ownerFilter); empty means
 // all.
 func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec string) error {
+	return runGH(stdout, stderr, dryRun, now, ownerSpec, ghRun)
+}
+
+func runGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec string, run func(...string) ([]byte, error)) error {
 	filter, err := parseOwnerFilter(ownerSpec)
 	if err != nil {
 		return err // a misconfigured filter is the caller's bug, not a skip
@@ -190,7 +205,7 @@ func RunGH(stdout, stderr io.Writer, dryRun bool, now time.Time, ownerSpec strin
 		prev = nil
 	}
 
-	cur, filter, err := fetchGHPRs(now, filter)
+	cur, filter, err := fetchGHPRsWithRunner(now, filter, run)
 	if err != nil {
 		fmt.Fprintf(stderr, "gh poll: fetch failed, keeping previous snapshot: %v\n", err)
 		return nil // no network / no gh is not an error state (§6)
@@ -256,7 +271,11 @@ type ghCheckNode struct {
 // It returns the resolved filter (with @me expanded) so callers can report
 // the scope they actually polled rather than the token they were given.
 func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter, error) {
-	filter, err := filter.resolveSelf()
+	return fetchGHPRsWithRunner(now, filter, ghRun)
+}
+
+func fetchGHPRsWithRunner(now time.Time, filter ownerFilter, run func(...string) ([]byte, error)) (*snapshot.GHPRs, ownerFilter, error) {
+	filter, err := filter.resolveSelfWithRunner(run)
 	if err != nil {
 		return nil, filter, err
 	}
@@ -266,7 +285,7 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 	for _, owner := range filter.include {
 		args = append(args, "--owner="+owner) // narrow server-side where we can
 	}
-	out, err := ghRun(args...)
+	out, err := run(args...)
 	if err != nil {
 		return nil, filter, err
 	}
@@ -306,7 +325,7 @@ func fetchGHPRs(now time.Time, filter ownerFilter) (*snapshot.GHPRs, ownerFilter
 		PRs:       map[string]snapshot.PR{},
 	}
 	for _, k := range order {
-		out, err := ghRun("pr", "view", fmt.Sprint(k.number), "--repo", k.repo,
+		out, err := run("pr", "view", fmt.Sprint(k.number), "--repo", k.repo,
 			"--json", "state,isDraft,title,url,reviewDecision,statusCheckRollup,updatedAt,baseRefName,headRefName,headRepository")
 		if err != nil {
 			return nil, filter, err
