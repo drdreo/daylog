@@ -284,14 +284,10 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 		if it.Receipt.Status == "error" && it.Receipt.Reason != "" {
 			in.PreviousErrors = append(in.PreviousErrors, capture.Redact(it.Receipt.Reason, 1024))
 		}
-		approved := false
-		for _, p := range w.Config.CloudProjects {
-			if original.Within(c.Context.Cwd, p) {
-				approved = true
-			}
-		}
-		if !approved || original.Within(c.Context.Cwd, root) {
-			return in, fmt.Errorf("cloud evidence submission not approved for captured project %q", c.Context.Cwd)
+		// Queued reports are eligible regardless of project. Keep the data
+		// directory excluded so internal Daylog state cannot feed curation.
+		if original.Within(c.Context.Cwd, root) {
+			return in, fmt.Errorf("reports from the daylog data directory cannot be curated")
 		}
 		c.Text = capture.Redact(c.Text, capture.MaxReportBytes)
 		in.Candidates = append(in.Candidates, c)

@@ -8,14 +8,13 @@ $data = "$env:LOCALAPPDATA\daylog-v2"
 & $daylog --data-dir $data init
 & $daylog --data-dir $data setup --pi 'C:\Program Files\nodejs\node.exe' `
   --pi-arg 'C:\path\to\pi-coding-agent\dist\cli.js' `
-  --pi-agent-dir "$env:USERPROFILE\.pi\agent" `
-  --approve-project 'C:\Projects\my-project'
+  --pi-agent-dir "$env:USERPROFILE\.pi\agent"
 & $daylog --data-dir $data doctor --check-model
 ```
 
 Use the actual installed Node executable and pi CLI script paths above. `runner.binary` is directly executable; `runner.arguments` stores fixed argv prefixes for launchers such as Node. This avoids relying on a `.cmd` npm shim, shell-constructed commands, or an interactive PATH. Missing/incompatible launchers are explicit queue/doctor errors, never a direct-publication fallback.
 
-For local native recovery, explicitly add narrow `--capture-scope harness=C:\native\directory` settings alongside approved projects. `--install-adapters` preserves unrelated hooks and leaves harness trust review to you. Configure working agent `DAYLOG_SOURCE` environments separately.
+Curation sends queued reports to the configured model without a per-project submission allowlist. For local native recovery, explicitly add narrow `--capture-scope harness=C:\native\directory` settings alongside `--approve-project C:\Projects\my-project`; these approvals restrict transcript capture, not curation. `--install-adapters` preserves unrelated hooks and leaves harness trust review to you. Configure working agent `DAYLOG_SOURCE` environments separately.
 
 Generate/inspect/register the Task Scheduler XML:
 

@@ -59,25 +59,26 @@ These controls are human-only. In a shell inheriting agent identity, explicitly 
 
 ## Configure Athena deliberately
 
-New configurations are **live by default**: the worker curates and publishes approved reports. There is no shadow rollout to complete. Use an explicit **dry run** when you want to inspect proposed decisions without processing reports.
+New configurations are **live by default**: the worker curates queued reports from any project and publishes useful outcomes. There is no shadow rollout to complete. Use an explicit **dry run** when you want to inspect proposed decisions without processing reports.
 
 ```sh
 daylog setup --pi /absolute/path/to/pi \
-  --pi-agent-dir "$HOME/.pi/agent" \
-  --approve-project /absolute/path/to/project
+  --pi-agent-dir "$HOME/.pi/agent"
 
 daylog curate --once --dry-run  # optional preview JSON; reports stay pending
 daylog curate --once            # fresh evaluation and publication
 daylog explain CANDIDATE
 ```
 
-`--approve-project` authorizes sending reports/evidence from that captured directory to the configured model, **including a dry run**. It does not scan sessions or install anything by itself. Approval applies to descendants; approve narrow worktree/project roots, not your entire home directory.
+The journal and queue are local, but curation sends queued reports and bounded evidence to your configured Pi model/provider, **including a dry run**. There is no per-project submission allowlist. The legacy `cloud_projects` config field is accepted but ignored and omitted when config is saved. Native transcript scanning still requires explicit capture scopes; submitting a report does not authorize scanning sessions or uploading a repository.
 
 Configuration is versioned `<data>/config.json`. `setup` persists executable paths and PATH for scheduled runs. Athena's default model is `openai-codex/gpt-5.6-luna` (catalog/CLI checked against pi 0.85.1). Provider/model are configurable; no provider fallback exists. Daylog reuses your installed pi harness, its configured model catalog, and existing authentication; it does not require a separate paid AI service or new API subscription. Authentication/refresh belongs to installed pi. If that harness/model is unavailable, Athena reports a clear error and retains the reports in the queue—there is no paid-provider fallback. The worker invokes Pi directly with its normal configuration and authentication—no credential copying or custom token handling. CLI flags disable tools, extensions, skills, prompt templates and context discovery, including global `APPEND_SYSTEM.md`. Normal Pi retry settings apply within Daylog's subprocess deadline.
 
 Initial bounds: 60-second episode quiet period, 300-second maximum wait, 8 inputs per batch, 2 model invocations per run, 40 per day, 120-second overall subprocess deadline, 64 KiB input, 1 MiB event-stream output, and 3 failed attempts with backoff. These are configurable limits, **not measured latency/cost promises**. A call cap is not a dollar budget.
 
-Dry runs return `preview` actions without changing candidates, receipts, saved plans, or the journal. They still send approved inputs to Pi and count against the model-call budget. The next normal run evaluates pending reports afresh; no retry is needed after a dry run.
+Dry runs return `preview` actions without changing candidates, receipts, saved plans, or the journal. They still send queued inputs to Pi and count against the model-call budget. The next normal run evaluates pending reports afresh; no retry is needed after a dry run.
+
+Reports already in error from the removed project gate still need `daylog queue retry CANDIDATE` to request fresh evaluation; removing the gate does not silently reset exhausted retries or replay previously held/skipped reports.
 
 For old installations only, an existing `mode: shadow` configuration stays paused until `daylog setup --mode live`. Old persisted shadow decisions are **never auto-applied**; use `daylog queue retry CANDIDATE` to explicitly request fresh evaluation against current outcomes/pins/dismissals. A crashed live plan resumes its saved operations without another model call. Stale targets or a policy change stop the affected plan and make its reports explicitly retryable without blocking unrelated reports. The plan and already-applied operations are retained, including writes recovered from an append-before-ack crash.
 
@@ -101,7 +102,7 @@ daylog setup --approve-project /absolute/project \
 daylog reconcile
 ```
 
-Directory approval is required **both for native scanning and for the original project**. Local capture approval and cloud approval are distinct config fields, even though this setup command grants both explicitly. Set them separately in config if you want local-only capture.
+Capture approval is required **both for the native session directory and for the original project**. `--approve-project` supplies the project roots for the specified `--capture-scope` entries; it is not needed for curation. Capture scopes remain an explicit restriction on which transcripts can be read. Once captured, reports are eligible for curation without another project gate. Stop the worker if you want intake without model submission.
 
 Setup preserves unrelated hook/settings entries and never grants harness trust. Review Claude/Codex hook trust yourself; restart/reload pi. Installed hook definitions are pinned to the listed contracts: revalidate adapters when upgrading harnesses. Unsupported native versions, partial tails, replaced/truncated files, scope failures, and cursor bounds are reported, not called complete coverage.
 

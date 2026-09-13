@@ -46,12 +46,10 @@ func TestDryRunLeavesReportsPendingForLiveEvaluation(t *testing.T) {
 }
 
 func TestDryRunFailuresDoNotConsumeAttempts(t *testing.T) {
-	for _, failure := range []string{"approval", "model", "invalid-decision"} {
+	for _, failure := range []string{"model", "invalid-decision"} {
 		t.Run(failure, func(t *testing.T) {
 			w, f, _ := fixture(t, "live")
 			switch failure {
-			case "approval":
-				w.Config.CloudProjects = nil
 			case "model":
 				f.fn = func(Input) (Output, error) { return Output{}, errors.New("unavailable") }
 			case "invalid-decision":

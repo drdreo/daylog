@@ -36,7 +36,6 @@ func fixture(t *testing.T, mode string) (*Worker, *fakeRunner, capture.Candidate
 	}
 	cfg := config.Defaults()
 	cfg.Mode = mode
-	cfg.CloudProjects = []string{cwd}
 	f := &fakeRunner{fn: func(in Input) (Output, error) {
 		return Output{Version: 2, Actions: []Action{{Kind: "publish", Candidates: []string{in.Candidates[0].ID}, Type: "work", Text: "Fixed refresh locking", Reason: "material change", Refs: []string{}}}}, nil
 	}}
@@ -96,7 +95,7 @@ func TestHoldNotRetriedByUnrelatedArrival(t *testing.T) {
 		t.Fatalf("new episode evidence should reopen held input: %d", inputs)
 	}
 }
-func TestModelFailureAndCloudConsent(t *testing.T) {
+func TestModelFailureBackoff(t *testing.T) {
 	w, f, _ := fixture(t, "live")
 	f.fn = func(Input) (Output, error) { return Output{}, errors.New("unavailable") }
 	if _, e := w.Once(context.Background(), false); e == nil {
@@ -114,10 +113,29 @@ func TestModelFailureAndCloudConsent(t *testing.T) {
 	if len(all) != 0 {
 		t.Fatal("fallback publication")
 	}
-	w, f, _ = fixture(t, "live")
-	w.Config.CloudProjects = nil
-	if _, e := w.Once(context.Background(), false); e == nil || f.calls != 0 {
-		t.Fatal("cloud consent bypass", e)
+}
+
+func TestReportsPublishWithoutProjectAllowlist(t *testing.T) {
+	w, f, _ := fixture(t, "live")
+	// Even a legacy allowlist covering an unrelated directory cannot veto intake.
+	w.Config.CloudProjects = []string{t.TempDir()}
+	res, err := w.Once(context.Background(), false)
+	if err != nil || f.calls != 1 || res.Events != 1 {
+		t.Fatal("project still gated", res, err)
+	}
+}
+
+func TestDataDirectoryRemainsExcludedFromCuration(t *testing.T) {
+	w, f, c := fixture(t, "live")
+	root, _ := store.DataDir()
+	for _, cwd := range []string{root, filepath.Join(root, "capture")} {
+		c.Context.Cwd = cwd
+		if _, err := w.input([]capture.Item{{Candidate: c}}); err == nil {
+			t.Fatal("data directory accepted", cwd)
+		}
+	}
+	if f.calls != 0 {
+		t.Fatal("internal data reached the model")
 	}
 }
 func TestStrictHostileOutput(t *testing.T) {

@@ -41,12 +41,12 @@ type Config struct {
 	MaxWaitSeconds        int      `json:"max_wait_seconds"`
 	BatchSize             int      `json:"batch_size"`
 	EvidenceRetentionDays int      `json:"evidence_retention_days"`
-	CloudProjects         []string `json:"cloud_projects"`
+	CloudProjects         []string `json:"cloud_projects,omitempty"` // Deprecated: accepted on read, ignored and cleared on load.
 	CaptureScopes         []Scope  `json:"capture_scopes"`
 }
 
 func Defaults() Config {
-	return Config{Version: Version, Mode: "live", GHPollSeconds: 300, Runner: Runner{Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CloudProjects: []string{}, CaptureScopes: []Scope{}}
+	return Config{Version: Version, Mode: "live", GHPollSeconds: 300, Runner: Runner{Provider: "openai-codex", Model: "gpt-5.6-luna", TimeoutSeconds: 120, MaxInputBytes: 65536, MaxOutputBytes: 1048576, CallsPerRun: 2, CallsPerDay: 40, MaxAttempts: 3}, QuietSeconds: 60, MaxWaitSeconds: 300, BatchSize: 8, EvidenceRetentionDays: 14, CaptureScopes: []Scope{}}
 }
 func Path() (string, error) { r, e := store.DataDir(); return filepath.Join(r, "config.json"), e }
 func Load() (Config, error) {
@@ -65,9 +65,12 @@ func Load() (Config, error) {
 		}
 		return Config{}, err
 	}
+	// Old per-project submission approval is no longer a curation gate.
+	c.CloudProjects = nil
 	return c, c.Validate()
 }
 func Save(c Config) error {
+	c.CloudProjects = nil
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -108,11 +111,6 @@ func (c Config) Validate() error {
 	}
 	if c.QuietSeconds < 0 || c.MaxWaitSeconds < c.QuietSeconds || c.MaxWaitSeconds > 3600 || c.BatchSize < 1 || c.BatchSize > 16 || c.EvidenceRetentionDays < 1 {
 		return fmt.Errorf("invalid batching/retention limits")
-	}
-	for _, p := range c.CloudProjects {
-		if !filepath.IsAbs(p) {
-			return fmt.Errorf("cloud project must be absolute")
-		}
 	}
 	for _, s := range c.CaptureScopes {
 		if s.Harness != "pi" && s.Harness != "claude" && s.Harness != "codex" {

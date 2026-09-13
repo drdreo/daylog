@@ -73,7 +73,7 @@ func TestAgentSourcesCannotBypassQueue(t *testing.T) {
 	if len(day.Entries) != 0 || day.Version != 2 {
 		t.Fatal(out)
 	}
-	if out, e := runCLI(t, home, "agent:pi", "curate", "--once"); e != nil && !strings.Contains(out, "approved") {
+	if out, e := runCLI(t, home, "agent:pi", "curate", "--once"); e != nil && !strings.Contains(out, "Athena unavailable") {
 		t.Fatal(out, e)
 	}
 }

@@ -25,7 +25,6 @@ func TestCrashHelper(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Mode = "live"
 	cfg.QuietSeconds = 0
-	cfg.CloudProjects = []string{os.Getenv("DAYLOG_CRASH_PROJECT")}
 	f := &fakeRunner{fn: func(in Input) (Output, error) {
 		p := filepath.Join(q.Root, "calls")
 		if _, e := os.Stat(p); e == nil {
@@ -51,10 +50,10 @@ func TestCrashHelper(t *testing.T) {
 	}
 }
 func TestKilledWorkerReleasesLockAndReplaysWithoutModel(t *testing.T) {
-	w, _, c := fixture(t, "live")
+	w, _, _ := fixture(t, "live")
 	start := func(mode string) *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCrashHelper$")
-		cmd.Env = append(os.Environ(), "DAYLOG_CRASH_HELPER="+mode, "DAYLOG_CRASH_PROJECT="+c.Context.Cwd)
+		cmd.Env = append(os.Environ(), "DAYLOG_CRASH_HELPER="+mode)
 		return cmd
 	}
 	cmd := start("kill")

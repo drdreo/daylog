@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build/install only. Store creation, hook installation, cloud consent and live
-# publication are separate explicit `daylog setup` actions; never migrate history.
+# Build/install only. Store creation, capture scopes and scheduler activation
+# are separate explicit setup actions; never migrate history.
 set -eu
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${DAYLOG_INSTALL_DIR:-"$HOME/.local/bin"}

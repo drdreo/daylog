@@ -117,9 +117,6 @@ func init() {
 		if _, e := os.Stat(filepath.Join(cfg.Runner.AgentDir, "auth.json")); e != nil {
 			issues = append(issues, "pi auth.json absent; provider may require login")
 		}
-		if len(cfg.CloudProjects) == 0 {
-			issues = append(issues, "no cloud projects approved; local intake remains available")
-		}
 		if deep && cfg.Runner.Binary != "" {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()

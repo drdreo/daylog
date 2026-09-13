@@ -90,9 +90,6 @@ func init() {
 				return fmt.Errorf("invalid project path")
 			}
 			approved = append(approved, abs)
-			if !contains(cfg.CloudProjects, abs) {
-				cfg.CloudProjects = append(cfg.CloudProjects, abs)
-			}
 		}
 		for _, raw := range scopes {
 			h, dir, ok := strings.Cut(raw, "=")
@@ -171,7 +168,7 @@ func init() {
 	c.Flags().StringVar(&piPath, "pi", "", "absolute pi executable or Node launcher path")
 	c.Flags().StringArrayVar(&piArgs, "pi-arg", nil, "fixed launcher argument (e.g. absolute pi CLI script for Node); repeatable")
 	c.Flags().StringVar(&agentDir, "pi-agent-dir", "", "installed pi auth/catalog directory")
-	c.Flags().StringArrayVar(&projects, "approve-project", nil, "approve this project for cloud editing; repeatable")
+	c.Flags().StringArrayVar(&projects, "approve-project", nil, "allow this project in the specified native capture scopes; repeatable (not needed for curation)")
 	c.Flags().StringArrayVar(&scopes, "capture-scope", nil, "approve harness=/native/session/directory for local scanning; repeatable")
 	c.Flags().StringVar(&mode, "mode", "", "live: explicitly resume an old shadow configuration (new installs are already live)")
 	c.Flags().BoolVar(&installAdapters, "install-adapters", false, "install configured harness adapters without bypassing trust")

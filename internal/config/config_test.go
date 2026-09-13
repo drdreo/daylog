@@ -3,6 +3,7 @@ package config
 import (
 	"github.com/drdreo/daylog/internal/store"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,28 @@ func TestGHPollIntervalCompatibility(t *testing.T) {
 		if err != nil || cfg.GHPollSeconds != want {
 			t.Fatal(cfg, err)
 		}
+	}
+}
+
+func TestLegacyCloudProjectsAreIgnoredAndNotSaved(t *testing.T) {
+	t.Setenv("DAYLOG_DIR", t.TempDir())
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := Path()
+	if err := os.WriteFile(path, []byte(`{"version":2,"cloud_projects":["old-project"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil || cfg.CloudProjects != nil {
+		t.Fatal(cfg, err)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(b), "cloud_projects") {
+		t.Fatal(string(b), err)
 	}
 }
 

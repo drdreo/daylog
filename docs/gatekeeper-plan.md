@@ -88,7 +88,7 @@ The first release also exposes:
 ```sh
 daylog status --json                   # machine-readable intake/worker status
 daylog queue list --status pending     # inspect candidates, not todos
-daylog curate --once                   # evaluate and publish approved reports
+daylog curate --once                   # evaluate queued reports and publish outcomes
 daylog curate --once --dry-run         # preview without processing reports
 daylog explain <candidate-or-entry>    # evidence, disposition, related outcomes
 daylog doctor                         # binary/model/adapter/queue health
@@ -222,7 +222,7 @@ After the report-fed editor works, add pi `agent_settled`, Claude terminal/Stop 
 
 Use incremental native-session reconciliation to recover missed hooks and enrich incomplete reports. Share native identity/revision keys between hooks and replay where possible; relate distinct report and hook IDs at the episode/evidence level. Handle pi's branched/copied history, transcript lag, repeated Stop within a turn, interrupted sessions, and child lineage without claiming a session equals a task. No-session/hard-crash gaps without saved evidence are unavoidable and must be reported honestly.
 
-Scanning and cloud evidence submission require explicitly approved directories/projects. Do not vacuum the entire transcript history on installation. Keep raw sessions at their native paths and copy only necessary bounded excerpts. Exclude credentials, `.env` material, hidden reasoning, and irrelevant tool output; redaction is best-effort, not blanket permission to upload a repository. Concrete agent handovers are sufficient source material without proof attachments. The editor preserves meaningful limitations and narrows overbroad claims rather than pretending to independently verify them; only genuinely unclear or contradictory results need a hold.
+Native scanning requires explicitly approved directories/projects. Curation submits queued reports and bounded evidence to the configured model without a separate per-project allowlist; the local queue does not imply local-only model execution. Do not vacuum the entire transcript history on installation. Keep raw sessions at their native paths and copy only necessary bounded excerpts. Exclude credentials, `.env` material, hidden reasoning, and irrelevant tool output; redaction is best-effort, not blanket permission to upload a repository. Concrete agent handovers are sufficient source material without proof attachments. The editor preserves meaningful limitations and narrows overbroad claims rather than pretending to independently verify them; only genuinely unclear or contradictory results need a hold.
 
 Exclude the daylog **data** directory and internal editor processes, not the daylog source repository. Treat all reports/transcripts/repository content as untrusted data. Source environment variables prevent accidental attribution mistakes; they are not an OS security boundary against other same-user processes.
 
