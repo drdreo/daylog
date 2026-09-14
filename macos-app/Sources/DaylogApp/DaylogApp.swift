@@ -86,7 +86,7 @@ struct DaylogApp: App {
 struct JournalPanel: View {
     @ObservedObject var model: JournalModel
     @State private var note = ""
-    @State private var noteType = "note"
+    @State private var noteType = "todo"
     @State private var showConnection = false
     @State private var showCalendar = false
     @State private var refreshingGitHub = false
