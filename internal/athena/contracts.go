@@ -12,7 +12,7 @@ import (
 )
 
 const Version = 2
-const PolicyVersion = "athena-v2.3"
+const PolicyVersion = "athena-v2.4"
 
 type Preference struct {
 	Entry  string `json:"entry"`
@@ -20,13 +20,14 @@ type Preference struct {
 	Reason string `json:"reason"`
 }
 type Input struct {
-	Version        int                 `json:"version"`
-	Policy         string              `json:"policy"`
-	Candidates     []capture.Candidate `json:"candidates"`
-	Evidence       []capture.Evidence  `json:"evidence"`
-	Outcomes       []event.Entry       `json:"outcomes"`
-	Preferences    []Preference        `json:"preferences"`
-	PreviousErrors []string            `json:"previous_errors,omitempty"`
+	Version         int                 `json:"version"`
+	Policy          string              `json:"policy"`
+	Candidates      []capture.Candidate `json:"candidates"`
+	Evidence        []capture.Evidence  `json:"evidence"`
+	Outcomes        []event.Entry       `json:"outcomes"`
+	EditableTargets []event.Target      `json:"editable_targets"`
+	Preferences     []Preference        `json:"preferences"`
+	PreviousErrors  []string            `json:"previous_errors,omitempty"`
 }
 type Action struct {
 	Kind       string         `json:"kind"`
@@ -91,6 +92,7 @@ func Validate(in Input, out Output) error {
 		allowedEvidence := map[string]bool{}
 		episode := ""
 		repo := event.Context{}
+		var primary capture.Candidate
 		seen := map[string]bool{}
 		for _, id := range a.Candidates {
 			c, ok := candidates[id]
@@ -105,8 +107,9 @@ func Validate(in Input, out Output) error {
 			if episode == "" {
 				episode = c.Episode
 				repo = c.Context
-			} else if c.Episode != episode || !event.SameProject(c.Context, repo) {
-				return fmt.Errorf("cannot combine unrelated episodes/repositories")
+				primary = c
+			} else if c.Episode != episode || !event.SameProject(c.Context, repo) || !event.SameDay(c.OccurredAt, primary.OccurredAt) {
+				return fmt.Errorf("cannot combine unrelated episodes/repositories or occurrence days")
 			}
 			for _, r := range c.Refs {
 				allowedRefs[r] = true
@@ -128,15 +131,19 @@ func Validate(in Input, out Output) error {
 			if !event.SameProject(e.Context, repo) {
 				return fmt.Errorf("cross-repository target")
 			}
-			if !terminal && (e.Provenance == nil || e.Provenance.Episode != episode) {
-				return fmt.Errorf("target lacks exact task/episode linkage")
-			}
 			for _, r := range e.Refs {
 				allowedRefs[r] = true
 			}
 			if !terminal {
-				if !event.SameDay(e.DisplayAt, candidates[a.Candidates[0]].OccurredAt) {
+				if !event.SameDay(e.DisplayAt, primary.OccurredAt) {
 					return fmt.Errorf("later-day milestones must be new dated deltas")
+				}
+				linked := false
+				for _, id := range a.Candidates {
+					linked = linked || linkedOutcome(candidates[id], e)
+				}
+				if !linked {
+					return fmt.Errorf("target needs exact episode or shared PR/issue ref; use editable_targets")
 				}
 				if touched[t.ID] {
 					return fmt.Errorf("conflicting target actions")

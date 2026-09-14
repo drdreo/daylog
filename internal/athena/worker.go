@@ -140,21 +140,21 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 		if !eligible {
 			continue
 		}
-		k := it.Candidate.Episode
+		k := editorialGroup(it.Candidate)
 		if len(groups[k]) == 0 {
 			order = append(order, k)
 		}
 		groups[k] = append(groups[k], it)
 	}
 	attempts := 0
-	for _, episode := range order {
+	for _, groupKey := range order {
 		if err := ctx.Err(); err != nil {
 			return res, errors.Join(runErr, err)
 		}
 		if attempts >= w.Config.Runner.CallsPerRun {
 			break
 		}
-		group := groups[episode]
+		group := groups[groupKey]
 		first, _ := time.Parse(time.RFC3339Nano, group[0].Candidate.CapturedAt)
 		last, _ := time.Parse(time.RFC3339Nano, group[len(group)-1].Candidate.CapturedAt)
 		if now.Sub(last) < time.Duration(w.Config.QuietSeconds)*time.Second && now.Sub(first) < time.Duration(w.Config.MaxWaitSeconds)*time.Second {
@@ -165,12 +165,12 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 		if len(group) > w.Config.BatchSize {
 			group = group[:w.Config.BatchSize]
 		}
-		// Only exact episode arrivals reopen held/skipped evidence; unrelated arrivals do not.
+		// Only same-day exact episode arrivals reopen held/skipped evidence.
 		for _, old := range items {
 			if len(group) >= w.Config.BatchSize {
 				break
 			}
-			if old.Candidate.Episode == episode && old.Receipt.Status == "processed" && (old.Receipt.Disposition == "hold" || old.Receipt.Disposition == "skip") {
+			if editorialGroup(old.Candidate) == groupKey && old.Receipt.Status == "processed" && (old.Receipt.Disposition == "hold" || old.Receipt.Disposition == "skip") {
 				group = append(group, old)
 			}
 		}
@@ -309,23 +309,26 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 	}
 	effective := event.Effective(all)
 	for _, e := range effective {
-		c := group[0].Candidate
-		if !event.SameProject(e.Context, c.Context) {
-			continue
-		}
-		linked := e.Provenance != nil && e.Provenance.Episode == c.Episode
-		occurrence, _ := time.Parse(time.RFC3339Nano, c.OccurredAt)
-		existing, _ := time.Parse(time.RFC3339Nano, e.DisplayAt)
-		delta := occurrence.Sub(existing)
-		hint := delta >= -24*time.Hour && delta <= 7*24*time.Hour
-		for _, r := range c.Refs {
-			for _, er := range e.Refs {
-				if r == er {
-					hint = true
+		related := false
+		for _, c := range in.Candidates {
+			if !event.SameProject(e.Context, c.Context) {
+				continue
+			}
+			linked := e.Provenance != nil && e.Provenance.Episode == c.Episode
+			occurrence, _ := time.Parse(time.RFC3339Nano, c.OccurredAt)
+			existing, _ := time.Parse(time.RFC3339Nano, e.DisplayAt)
+			delta := occurrence.Sub(existing)
+			hint := delta >= -24*time.Hour && delta <= 7*24*time.Hour
+			for _, r := range c.Refs {
+				for _, er := range e.Refs {
+					if r == er {
+						hint = true
+					}
 				}
 			}
+			related = related || linked || hint
 		}
-		if linked || hint {
+		if related {
 			e.TLDR = capture.Redact(e.TLDR, event.MaxTLDRChars*4)
 			e.Details = capture.Redact(e.Details, event.MaxDetailsChars*4)
 			for i, tag := range e.Tags {
@@ -337,6 +340,7 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 		}
 	}
 	sort.Slice(in.Outcomes, func(i, j int) bool { return in.Outcomes[i].ID < in.Outcomes[j].ID })
+	in.EditableTargets = editableTargets(in)
 	if len(in.Outcomes) > 64 {
 		return in, fmt.Errorf("related outcome context exceeds cap; narrow task linkage")
 	}

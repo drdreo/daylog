@@ -35,6 +35,8 @@ daylog add --type work --ref '#142' \
 
 All agent `work`, `sidequest`, and `note` reports **always enqueue**. The worker being absent, broken, stopped, or being previewed never enables direct publication. Reports are brief handovers: what changed or was learned, checks actually performed, and important limitations. They are bounded at 16 KiB; Athena writes a headline of at most 100 characters, optional expandable details of at most 2,000 characters, and up to three optional tags. Human notes and historical TLDRs retain their 280-character limit. No fixed form, proof attachments, or extra verification work are required just to report. `--idempotency-key REQUEST` deduplicates identical keyed reports; ordinary unkeyed CLI calls are retained independently.
 
+Athena's `athena-v2.4` editorial policy keeps the journal at outcome level: related same-day fixes, follow-ups, and verification normally update one concise entry rather than generate a row per agent turn. Same-day outcomes can be linked by an exact shared PR/issue ref across turns; the model receives an explicit list of editable targets. Mere repository/session similarity cannot authorize an edit. Human-edited entries remain protected, later-day milestones stay separate, and verification of an earlier build never certifies later changes. Routine review housekeeping, unchanged tests, and redundant progress skip; meaningful independent outcomes and unresolved risks remain visible. No entry-count quota or automatic cleanup of existing history is introduced.
+
 `queued` means durably captured, **not visible in the journal**. Athena may rewrite, combine, amend, merge, skip, or hold reports. Concrete agent reports are sufficient source material: Athena curates them rather than requiring independent proof. It preserves reported uncertainty and holds only genuinely unclear or contradictory results. See the single [reporting skill](skills/daylog/SKILL.md) and [instruction block](docs/AGENT_INSTRUCTIONS.md).
 
 Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or `jira:PROJ-45`. `#142` expands using capture-time repository host/path. Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
@@ -75,6 +77,16 @@ The journal and queue are local, but curation sends queued reports and bounded e
 Configuration is versioned `<data>/config.json`. `setup` persists executable paths and PATH for scheduled runs. Athena's default model is `openai-codex/gpt-5.6-luna` (catalog/CLI checked against pi 0.85.1). Provider/model are configurable; no provider fallback exists. Daylog reuses your installed pi harness, its configured model catalog, and existing authentication; it does not require a separate paid AI service or new API subscription. Authentication/refresh belongs to installed pi. If that harness/model is unavailable, Athena reports a clear error and retains the reports in the queue—there is no paid-provider fallback. The worker invokes Pi directly with its normal configuration and authentication—no credential copying or custom token handling. CLI flags disable tools, extensions, skills, prompt templates and context discovery, including global `APPEND_SYSTEM.md`. Normal Pi retry settings apply within Daylog's subprocess deadline.
 
 Initial bounds: 60-second episode quiet period, 300-second maximum wait, 8 inputs per batch, 2 model invocations per run, 40 per day, 120-second overall subprocess deadline, 64 KiB input, 1 MiB event-stream output, and 3 failed attempts with backoff. These are configurable limits, **not measured latency/cost promises**. A call cap is not a dollar budget.
+
+For an opt-in editorial check using only synthetic reports and temporary stores (not your journal), run:
+
+```sh
+DAYLOG_LUNA_SMOKE=1 DAYLOG_SMOKE_PI="$HOME/.local/bin/pi" \
+  DAYLOG_SMOKE_PI_AGENT_DIR="$HOME/.pi/agent" \
+  go test ./internal/athena -run TestOptInEditorialConsolidation -v
+```
+
+These checks exercise model choices about updates, noise, batching, independent risks, and stale verification. Ordinary tests cover deterministic linkage, day boundaries, and human protection without inference. A passing synthetic check is not a guarantee of every future editorial judgment.
 
 Dry runs return `preview` actions without changing candidates, receipts, saved plans, or the journal. They still send queued inputs to Pi and count against the model-call budget. The next normal run evaluates pending reports afresh; no retry is needed after a dry run.
 

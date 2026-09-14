@@ -189,7 +189,7 @@ Authentication stays with the installed pi provider setup. No model fallback tha
 
 ### Editorial input and output
 
-Input: a bounded batch of related reports, safe supporting evidence, relevant existing outcomes **including dismissed/pinned identities**, and a few private preference examples. Prefer exact task/native/artifact linkage for retrieval; repository/refs/time are hints, not unique task keys. No vector database in v1.
+Input: a bounded batch of related reports, safe supporting evidence, relevant existing outcomes **including dismissed/pinned identities**, and a few private preference examples. Prefer exact task/native/artifact linkage for retrieval; repository/refs/time are not unique task keys. Batches stay within one exact episode and captured occurrence day. Same-day existing outcomes may be edited across turns when linked by an exact shared typed PR/issue ref; Go supplies legal IDs/revisions in `editable_targets`, and the model must still distinguish genuinely related outcomes from independent work. Human protections, revision checks, and day boundaries remain enforced. No vector database in v1.
 
 A useful structured action vocabulary is:
 

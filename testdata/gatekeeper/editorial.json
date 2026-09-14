@@ -1,0 +1,45 @@
+[
+  {
+    "name": "focus-followup",
+    "existing": "Improved image-edit keyboard behavior",
+    "existing_details": "Escape stays inside the image editor and focus returns to the Edit button. Browser behavior remains untested.",
+    "reports": ["Also restored focus when submitting or cancelling the image-edit tool. This closes the remaining focus gap on the same PR; it is part of the keyboard behavior outcome, not a separate feature. Lint and 1078 tests passed. Browser behavior remains untested."],
+    "want": "amend"
+  },
+  {
+    "name": "review-bookkeeping",
+    "reports": ["Corrected a stale review finding and replied to the review thread. No code, product behavior, decision, or remaining risk changed."],
+    "want": "skip"
+  },
+  {
+    "name": "repeated-verification",
+    "existing": "Completed image-edit feature-flag coverage",
+    "existing_details": "The panel and view disable editing and its subscriptions when the flag is off. Focused tests passed; browser checks remain outstanding.",
+    "reports": ["Ran the same unchanged feature-flag suite again: all 4586 tests passed. Replied to a bot thread and refreshed the PR body. No implementation changes or new findings; still no browser checks."],
+    "want": "skip"
+  },
+  {
+    "name": "one-outcome-per-batch",
+    "reports": [
+      "Found incomplete image-edit flag gating: hiding the Edit button leaves sessions and overlays active. No fix yet.",
+      "Fixed the panel handlers and session-reset behavior when the flag is disabled. View-level subscriptions still need gating.",
+      "Completed the remaining view-level subscription gating and verified both flag states with focused tests. This resolves the earlier incomplete-gating finding. Browser behavior remains untested."
+    ],
+    "want": "publish"
+  },
+  {
+    "name": "verification-before-later-change",
+    "existing": "Improved image-edit keyboard behavior",
+    "existing_details": "Escape restoration passed browser checks on the earlier build. A later change parks focus while processing disables the toolbar; that change has not been browser-tested.",
+    "reports": ["The browser agent's report has arrived: it confirmed Escape restoration and animation timing on the earlier build. That browser pass happened before the processing-focus change, so it does not verify that later code. No new implementation or later-build verification occurred."],
+    "want": "update-or-skip",
+    "preserve_processing_gap": true
+  },
+  {
+    "name": "independent-accessibility-risk",
+    "existing": "Completed image-edit feature-flag coverage",
+    "existing_details": "The panel and view stop editing and subscriptions when the feature flag is disabled. Tests for both flag states passed.",
+    "reports": ["Found an independent unresolved accessibility risk on this PR: Reduce Motion makes all working effects static, so image processing looks hung with no other progress cue. This affects users while editing is enabled, not feature-flag behavior. No fix has been implemented."],
+    "want": "publish"
+  }
+]
