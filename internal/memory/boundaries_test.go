@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+func TestUnsupportedFilesystemRefusedBeforeCreation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "memory")
+	for _, write := range []bool{false, true} {
+		err := prepareRoot(root, write, func(string) error { return fmt.Errorf("synthetic remote filesystem") })
+		if err == nil {
+			t.Fatal("unsupported filesystem accepted")
+		}
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatal("created root on unsupported filesystem")
+		}
+	}
+}
+
 func TestCanceledAttachedTransactionAndRecovery(t *testing.T) {
 	s, root := openTest(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -186,7 +186,7 @@ func (s *Store) Forget(ctx context.Context, owner, id string, revision int) erro
 	if e := s.requireWrite(); e != nil {
 		return e
 	}
-	if !identifier.MatchString(id) || revision < 1 {
+	if !ValidID(id) || revision < 1 {
 		return fmt.Errorf("valid ID and positive expected revision required")
 	}
 	db, e := s.schema(owner)

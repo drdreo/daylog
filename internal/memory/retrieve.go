@@ -23,7 +23,7 @@ func (s *Store) scoped(owners []string) (*Store, error) {
 	return &r, nil
 }
 func (s *Store) Show(ctx context.Context, owner, id string, allowedOwners []string) (Record, error) {
-	if !identifier.MatchString(id) || !allowed(allowedOwners, owner) {
+	if !ValidID(id) || !allowed(allowedOwners, owner) {
 		return Record{}, fmt.Errorf("valid ID and explicit owner scope required")
 	}
 	r, e := s.scoped(allowedOwners)
@@ -126,7 +126,7 @@ func (s *Store) Search(ctx context.Context, filter Filter) ([]Record, error) {
 		} else {
 			afterOwner = filter.Owners[0]
 		}
-		if !identifier.MatchString(afterID) || !allowed(filter.Owners, afterOwner) || filter.Query != "" {
+		if !ValidID(afterID) || !allowed(filter.Owners, afterOwner) || filter.Query != "" {
 			return nil, fmt.Errorf("after requires ID for one owner or owner:ID for both, and no query")
 		}
 	}

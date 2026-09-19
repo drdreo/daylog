@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -19,8 +18,6 @@ import (
 )
 
 const memoryInputLimit = 32 * 1024
-
-var memoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func init() { rootCmd.AddCommand(newAthenaCommand()) }
 
@@ -119,7 +116,7 @@ func memoryReadScope(cmd *cobra.Command, owner, owners string) ([]string, error)
 }
 
 func memoryID(id string) error {
-	if !memoryIDPattern.MatchString(id) {
+	if !memory.ValidID(id) {
 		return fmt.Errorf("ID must contain 1..64 ASCII letters, digits, underscores, or hyphens")
 	}
 	return nil

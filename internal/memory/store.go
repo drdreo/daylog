@@ -71,12 +71,8 @@ func Open(ctx context.Context, root string, writable bool, owners ...string) (_ 
 	} else if e := validateOwners(owners); e != nil {
 		return nil, e
 	}
-	if writable {
-		if _, e := os.Lstat(root); os.IsNotExist(e) {
-			if e = durable.Mkdir(root); e != nil {
-				return nil, e
-			}
-		}
+	if e := prepareRoot(root, writable, checkLocalRoot); e != nil {
+		return nil, e
 	}
 	if e := regularPrivate(root, true); e != nil {
 		return nil, e
@@ -364,7 +360,7 @@ func (s *Store) requireWrite() error {
 	return nil
 }
 func (s *Store) schema(owner string) (string, error) {
-	if _, e := ownerDB(owner); e != nil {
+	if e := validateOwner(owner); e != nil {
 		return "", e
 	}
 	db, ok := s.schemas[owner]

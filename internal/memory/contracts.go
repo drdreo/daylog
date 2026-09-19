@@ -50,14 +50,14 @@ type Filter struct {
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-func ownerDB(owner string) (string, error) {
-	switch owner {
-	case "athena":
-		return "main", nil
-	case "dreo":
-		return "dreo", nil
+// ValidID is shared by CLI preflight and persistence validation.
+func ValidID(id string) bool { return identifier.MatchString(id) }
+
+func validateOwner(owner string) error {
+	if owner != "athena" && owner != "dreo" {
+		return fmt.Errorf("owner must be athena or dreo")
 	}
-	return "", fmt.Errorf("owner must be athena or dreo")
+	return nil
 }
 func allowed(owners []string, owner string) bool {
 	for _, o := range owners {
@@ -73,7 +73,7 @@ func validateOwners(owners []string) error {
 	}
 	seen := map[string]bool{}
 	for _, o := range owners {
-		if _, e := ownerDB(o); e != nil {
+		if e := validateOwner(o); e != nil {
 			return e
 		}
 		if seen[o] {
@@ -95,10 +95,10 @@ func member(s, values string) bool {
 	return false
 }
 func validateInput(in Input, confirm bool) error {
-	if _, e := ownerDB(in.Owner); e != nil {
+	if e := validateOwner(in.Owner); e != nil {
 		return e
 	}
-	if !identifier.MatchString(in.ID) {
+	if !ValidID(in.ID) {
 		return fmt.Errorf("invalid record ID")
 	}
 	if !member(in.Author, "athena dreo other") {
@@ -151,10 +151,10 @@ func validateInput(in Input, confirm bool) error {
 	}
 	seen := map[string]bool{}
 	for _, r := range in.Sources {
-		if _, e := ownerDB(r.Owner); e != nil {
+		if e := validateOwner(r.Owner); e != nil {
 			return e
 		}
-		if !identifier.MatchString(r.ID) || r.Revision < 1 || len(r.Hash) != 64 {
+		if !ValidID(r.ID) || r.Revision < 1 || len(r.Hash) != 64 {
 			return fmt.Errorf("invalid source reference")
 		}
 		if _, e := hex.DecodeString(r.Hash); e != nil {
