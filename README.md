@@ -49,6 +49,8 @@ Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or
 
 This opt-in component does not read the journal, transcripts or repositories, call a model, or change curation, tasks, services or skills. Source text is data, not authorization; same-user CLI flags are not an OS identity boundary.
 
+The [on-demand assistant experiment](docs/athena-assistant-experiment.md) records six synthetic brief/review trials, including their failures, for reuse in an existing conversation—not a new runtime or validated autonomous feature. [Current data boundaries and retention](docs/athena-data-boundaries.md) distinguish enforced memory/curator gates from prompt guidance and model-sharing approval.
+
 ## Human controls
 
 ```sh
