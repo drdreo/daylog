@@ -236,6 +236,76 @@ func TestOversizedReopenedHoldKeepsReceiptAndAllowsUnrelatedProgress(t *testing.
 	}
 }
 
+func TestLargeBacklogSubmitsFittingBatchWithoutScanningTail(t *testing.T) {
+	w, f, c := fixture(t, "live")
+	for i := 0; i < 250; i++ {
+		c.ID = ""
+		c.CapturedAt = w.now().Add(-9 * time.Minute).Format(time.RFC3339Nano)
+		c.Text = strings.Repeat("synthetic completed work. ", 100)
+		if i == 249 {
+			// This individually unfit tail item must wait behind the already
+			// selected batch, not consume its preflight time or get failed now.
+			c.Text = strings.Repeat("synthetic completed work. ", 250)
+			c.CapturedAt = w.now().Add(-8 * time.Minute).Format(time.RFC3339Nano)
+		}
+		if _, err := w.Queue.Enqueue(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 80; i++ {
+		appendContextOutcome(t, w, c, i, nil, fmt.Sprintf("optional-%d", i))
+	}
+	w.Config.Runner.MaxInputBytes = 4500
+	w.Config.Runner.TimeoutSeconds = 1
+	selected := 0
+	f.fn = func(in Input) (Output, error) {
+		selected = len(in.Candidates)
+		out := Output{Version: Version}
+		for _, candidate := range in.Candidates {
+			out.Actions = append(out.Actions, Action{Kind: "skip", Candidates: []string{candidate.ID}, Reason: "synthetic duplicate"})
+		}
+		return out, nil
+	}
+	res, err := w.Once(context.Background(), false)
+	if err != nil || res.Calls != 1 || res.Plans != 1 || f.calls != 1 || selected != 2 {
+		t.Fatal("fitting batch starved behind oversized backlog", res, err, f.calls, selected)
+	}
+	pending, err := w.Queue.List("pending")
+	if err != nil || len(pending) != 251-selected {
+		t.Fatal("unselected backlog changed", len(pending), err)
+	}
+	for _, it := range pending {
+		if it.Receipt.Attempts != 0 || it.Receipt.PlanID != "" {
+			t.Fatal("preflight scanned/mutated deferred backlog", it.Receipt)
+		}
+	}
+}
+
+func TestPreflightBoundsIndividuallyUnfitLookahead(t *testing.T) {
+	w, f, c := fixture(t, "live")
+	for i := 0; i < 20; i++ {
+		c.ID = ""
+		c.CapturedAt = w.now().Add(-9 * time.Minute).Format(time.RFC3339Nano)
+		c.Text = strings.Repeat("synthetic oversized report. ", 250)
+		if _, err := w.Queue.Enqueue(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Config.Runner.MaxInputBytes = 4500
+	res, err := w.Once(context.Background(), false)
+	if err == nil || res.Calls != 1 || res.Events != 1 || f.calls != 1 {
+		t.Fatal("unfit lookahead blocked the fitting report", res, err, f.calls)
+	}
+	failed, err := w.Queue.List("error")
+	if err != nil || len(failed) != w.Config.BatchSize-1 {
+		t.Fatal("preflight did not bound examined reports", len(failed), err)
+	}
+	pending, err := w.Queue.List("pending")
+	if err != nil || len(pending) != 21-w.Config.BatchSize {
+		t.Fatal("deferred tail changed", len(pending), err)
+	}
+}
+
 func TestBatchThatFitsSeparatelyDefersWithoutFailedReceipts(t *testing.T) {
 	w, f, c := fixture(t, "live")
 	in, err := w.input([]capture.Item{{Candidate: c}})

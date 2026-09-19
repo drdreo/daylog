@@ -164,13 +164,15 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 		// Preflight each report independently so one unfit report cannot poison
 		// its episode or spend another episode's invocation allowance. Reports
 		// that fit alone but not together stay pending for a later bounded batch.
+		// Bound examined reports too: unfit tails must not consume the entire
+		// worker deadline before an already-selected batch can reach the runner.
 		selected := []capture.Item{}
-		for _, it := range group {
+		for scanned, it := range group {
+			if scanned >= w.Config.BatchSize {
+				break
+			}
 			if err := ctx.Err(); err != nil {
 				return res, errors.Join(runErr, err)
-			}
-			if len(selected) >= w.Config.BatchSize {
-				break
 			}
 			if _, err := w.input([]capture.Item{it}); err != nil {
 				if !dryRun {
@@ -187,7 +189,9 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 				if !errors.As(err, &limit) {
 					return res, errors.Join(runErr, err)
 				}
-				continue
+				// Finalize this fitting batch instead of searching the whole
+				// episode for a smaller report. The rest remain eligible.
+				break
 			}
 			selected = trial
 		}
