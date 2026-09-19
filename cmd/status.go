@@ -33,9 +33,12 @@ func health() (map[string]any, error) {
 	last := ""
 	oldest := ""
 	failures := []map[string]string{}
-	coverage := map[string]string{"pi": "not configured", "claude": "not configured", "codex": "not configured"}
+	coverage := map[string]string{}
+	for _, harness := range []string{"pi", "claude", "codex"} {
+		coverage[harness] = "optional native recovery not configured; explicit reports can still enqueue; no transcript coverage implied"
+	}
 	for _, s := range cfg.CaptureScopes {
-		coverage[s.Harness] = "approved scope configured; unsaved-session gaps remain"
+		coverage[s.Harness] = "optional native recovery scope configured, not verified coverage; inspect source_health scan times/errors; unsupported and unsaved sessions remain gaps"
 	}
 	for _, it := range items {
 		counts[it.Receipt.Status]++
@@ -47,7 +50,7 @@ func health() (map[string]any, error) {
 			oldest = it.Candidate.CapturedAt
 		}
 		if it.Receipt.Status == "error" {
-			failures = append(failures, map[string]string{"candidate": it.Candidate.ID, "reason": it.Receipt.Reason})
+			failures = append(failures, map[string]string{"candidate": it.Candidate.ID, "reason": diagnosticFailure(it.Receipt, cfg, time.Now())})
 		}
 	}
 	temps := []string{}
@@ -80,13 +83,181 @@ func health() (map[string]any, error) {
 	age := 0.0
 	if oldest != "" {
 		t, _ := time.Parse(time.RFC3339Nano, oldest)
-		age = time.Since(t).Seconds()
+		age = max(0, time.Since(t).Seconds())
 	}
 	return map[string]any{"build": store.BuildVersion, "store_version": store.Version, "policy": athena.PolicyVersion, "mode": cfg.Mode, "queue": counts, "last_observed_input": last, "oldest_unfinished": oldest, "queue_age_seconds": age, "failures": failures, "interrupted_temporary_files": temps, "coverage": coverage, "source_health": sourceHealth, "runner": cfg.Runner}, nil
 }
+
+// Diagnostic annotations are read-time explanations, never receipt mutations.
+func diagnosticFailure(r capture.Receipt, cfg config.Config, now time.Time) string {
+	retry := "retry allowance remains, subject to mode, budget, and input checks"
+	switch {
+	case r.PlanID != "":
+		retry = "retained plan; inspect explain before an explicit human retry"
+	case r.Attempts >= cfg.Runner.MaxAttempts:
+		retry = "automatic retries exhausted; inspect explain before an explicit human retry"
+	default:
+		if at, err := time.Parse(time.RFC3339Nano, r.NextAttemptAt); err == nil && now.Before(at) {
+			retry = "backoff until " + r.NextAttemptAt
+		}
+	}
+	return fmt.Sprintf("%s; attempts %d/%d; %s; recorded reason: %s", failureClass(r.Reason), r.Attempts, cfg.Runner.MaxAttempts, retry, capture.Redact(r.Reason, 1024))
+}
+
+func failureClass(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "candidate ") && strings.Contains(reason, " cannot fit without outcome context: Athena input exceeds cap ("):
+		return "local input failure (candidate cannot fit)"
+	case strings.HasPrefix(reason, "current report batch cannot fit without outcome context: Athena input exceeds cap ("):
+		return "local input failure (report batch cannot fit)"
+	case strings.HasPrefix(reason, "required linked outcome context cannot fit: Athena input exceeds cap ("), reason == "required linked outcome context exceeds 64 outcomes; reports were not truncated":
+		return "local input failure (required linked context cannot fit)"
+	case reason == "Athena input exceeds cap", reason == "reports from the daylog data directory cannot be curated", reason == "related outcome context exceeds cap; narrow task linkage":
+		return "local input failure (before model invocation)"
+	case strings.HasPrefix(reason, "Athena unavailable:"):
+		return "local runner setup failure"
+	case strings.HasPrefix(reason, "Athena's configured model "), strings.HasPrefix(reason, "pi timeout/cancellation:"):
+		return "runner/model failure (local execution or provider; provider cause not confirmed)"
+	default:
+		return "processing failure (not necessarily a provider failure)"
+	}
+}
+
+// Only the existing redaction markers count. Empty input and retained prose do
+// not prove complete redaction; a truncation marker alone does not either.
+func completelyRedacted(text string) bool {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	seen := false
+	for i, line := range lines {
+		switch strings.TrimSpace(line) {
+		case "":
+		case "[sensitive line excluded]":
+			seen = true
+		case "[excerpt truncated]":
+			if i != len(lines)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return seen
+}
+
+func diagnoseQueue(q *capture.Spool, cfg config.Config, items []capture.Item, now time.Time) ([]string, error) {
+	issues := []string{}
+	if cfg.Mode == "shadow" {
+		issues = append(issues, "processing paused by legacy shadow configuration; capture is not publication")
+	}
+	var exhausted, retained, aging, redacted, missingEvidence int
+	classes := map[string]int{}
+	for _, it := range items {
+		r := it.Receipt
+		if r.Status == "error" {
+			classes[failureClass(r.Reason)]++
+			if r.PlanID != "" {
+				retained++
+			} else if r.Attempts >= cfg.Runner.MaxAttempts {
+				exhausted++
+			}
+		}
+		if r.Status == "processed" {
+			continue
+		}
+		at, _ := time.Parse(time.RFC3339Nano, it.Candidate.CapturedAt)
+		if now.Sub(at) > time.Duration(cfg.MaxWaitSeconds+cfg.Runner.TimeoutSeconds)*time.Second {
+			aging++
+		}
+		markerOnly := completelyRedacted(capture.Redact(it.Candidate.Text, capture.MaxReportBytes))
+		missing := false
+		for _, id := range it.Candidate.Evidence {
+			e, err := q.GetEvidence(id)
+			if err != nil {
+				missing = true
+				continue
+			}
+			markerOnly = markerOnly || completelyRedacted(e.Text)
+		}
+		if markerOnly {
+			redacted++
+		}
+		if missing {
+			missingEvidence++
+		}
+	}
+	// Stable, bounded summaries rather than copying report/evidence text.
+	for _, class := range []string{
+		"local input failure (candidate cannot fit)",
+		"local input failure (report batch cannot fit)",
+		"local input failure (required linked context cannot fit)",
+		"local input failure (before model invocation)",
+		"local runner setup failure",
+		"runner/model failure (local execution or provider; provider cause not confirmed)",
+		"processing failure (not necessarily a provider failure)",
+	} {
+		if n := classes[class]; n > 0 {
+			issues = append(issues, fmt.Sprintf("%d report(s): %s; inspect status failures and explain", n, class))
+		}
+	}
+	if exhausted > 0 {
+		issues = append(issues, fmt.Sprintf("%d report(s): automatic retries exhausted; no automatic reset or replay", exhausted))
+	}
+	if retained > 0 {
+		issues = append(issues, fmt.Sprintf("%d failed report(s) retain a saved plan; automatic fresh evaluation is blocked, inspect explain", retained))
+	}
+	if aging > 0 {
+		issues = append(issues, fmt.Sprintf("%d unfinished report(s) captured longer ago than batching max wait plus runner timeout; this snapshot does not prove the worker is stopped", aging))
+	}
+	if redacted > 0 {
+		issues = append(issues, fmt.Sprintf("%d unfinished report(s) have marker-only report text or evidence: only redaction markers remain in the retained excerpt (possibly truncated); original content and work coverage unknown, not empty input or a provider failure", redacted))
+	}
+	if missingEvidence > 0 {
+		issues = append(issues, fmt.Sprintf("%d unfinished report(s) have missing or unreadable local evidence; model input is blocked before provider invocation", missingEvidence))
+	}
+	budget := athena.Budget{}
+	if err := durable.Read(filepath.Join(q.Root, "budget.json"), &budget); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	} else if budget.Version != athena.Version {
+		issues = append(issues, "unsupported local call budget version; processing is blocked before provider invocation")
+	} else if budget.Date == now.Format("2006-01-02") && budget.Calls >= cfg.Runner.CallsPerDay {
+		issues = append(issues, fmt.Sprintf("daily model call budget exhausted (%d/%d, %s); includes dry runs, not a provider failure; intake continues", budget.Calls, cfg.Runner.CallsPerDay, budget.Date))
+	}
+	paths, err := filepath.Glob(filepath.Join(q.Root, "plans", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	var mismatch, shadow int
+	for _, path := range paths {
+		var plan athena.Plan
+		if err := durable.Read(path, &plan); err != nil {
+			return nil, err
+		}
+		if plan.Status == "ready" && plan.Mode == "live" && plan.Input.Policy != athena.PolicyVersion {
+			mismatch++
+		}
+		if plan.Status == "shadow" || (plan.Status == "ready" && plan.Mode == "shadow") {
+			shadow++
+		}
+	}
+	if mismatch > 0 {
+		issues = append(issues, fmt.Sprintf("%d ready live plan(s) have a saved policy different from running policy %s; they cannot apply under this binary; inspect explain, no automatic re-evaluation", mismatch, athena.PolicyVersion))
+	}
+	if shadow > 0 {
+		issues = append(issues, fmt.Sprintf("%d saved shadow plan(s) will never auto-publish; upgrading or switching mode does not re-evaluate them", shadow))
+	}
+	return issues, nil
+}
+
 func init() {
 	var jsonOut bool
-	s := &cobra.Command{Use: "status", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	s := &cobra.Command{Use: "status", Short: "Inspect capture and queue state, not proof of publication or complete coverage", Long: `Inspect the current capture and queue snapshot (always JSON).
+Queue pending/processing/processed/error are processing states; hold/skip are
+independent editorial dispositions, usually on processed items. last_observed_input is capture
+time, not processing, publication, or the journal display day. source_health
+contains saved observations, not a live scan. Run doctor for blocked-state
+summaries and explain CANDIDATE for receipt and saved-plan details.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		h, e := health()
 		if e != nil {
 			return e
@@ -109,10 +280,23 @@ func init() {
 		if e != nil {
 			return e
 		}
+		q, e := capture.Open()
+		if e != nil {
+			return e
+		}
+		items, e := q.List("")
+		if e != nil {
+			return e
+		}
+		queueIssues, e := diagnoseQueue(q, cfg, items, time.Now())
+		if e != nil {
+			return e
+		}
+		issues = append(issues, queueIssues...)
 		if cfg.Runner.Binary == "" {
-			issues = append(issues, "runner.binary not configured")
+			issues = append(issues, "local runner setup: runner.binary not configured; this is not a provider failure")
 		} else if _, e := os.Stat(cfg.Runner.Binary); e != nil {
-			issues = append(issues, "runner binary missing")
+			issues = append(issues, "local runner setup: runner binary missing; this is not a provider failure")
 		}
 		if _, e := os.Stat(filepath.Join(cfg.Runner.AgentDir, "auth.json")); e != nil {
 			issues = append(issues, "pi auth.json absent; provider may require login")

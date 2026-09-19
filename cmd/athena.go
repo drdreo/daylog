@@ -109,7 +109,23 @@ func init() {
 	retry.Flags().StringVar(&source, "source", "", "human source override")
 	queue.AddCommand(retry)
 	rootCmd.AddCommand(queue)
-	explain := &cobra.Command{Use: "explain <candidate-or-entry>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	explain := &cobra.Command{Use: "explain <candidate-or-entry>", Short: "Inspect captured input, processing receipt, saved plan, or entry history", Long: `Inspect existing records without retrying or applying a plan.
+For a candidate, captured_at is intake time and occurred_at is the reported
+occurrence. receipt.updated_at is the latest receipt update, not necessarily a
+model call or publication (pending can use capture time). plan.created_at is
+planning time; planned events are not proof of publication. receipt.applied_events
+and entry history identify recorded writes; a crash can leave acknowledgment
+pending after a write. history[].recorded_at is the saved event timestamp, set at
+planning time for Athena and preserved on replay, not exact delayed-publication
+time. entry.display_at is the occurrence-based journal day.
+
+Compare receipt.policy and plan.input.policy with daylog version's running policy.
+An upgrade does not rewrite old receipts or re-evaluate saved plans. Compatible
+live plans resume saved operations; incompatible plans stop for inspection and
+explicit human retry. Saved shadow plans never auto-publish. Diagnostics do not
+retry reports or reset budgets. Marker-only text ([sensitive line excluded])
+means no prose remains in that excerpt, not that no work occurred; a truncated
+excerpt cannot establish what the rest of the original content contained.`, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		q, err := capture.Open()
 		if err != nil {
 			return err
@@ -155,7 +171,10 @@ func init() {
 		return printJSON(cmd, map[string]any{"entry": t, "history": history})
 	}}
 	rootCmd.AddCommand(explain)
-	rootCmd.AddCommand(&cobra.Command{Use: "version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	rootCmd.AddCommand(&cobra.Command{Use: "version", Short: "Show this running binary's build, store/event versions, and compiled policy", Long: `Show versions compiled into this invocation, not a checkout or another installed
+binary. Compare the exact executable used by your scheduled job with the one on
+PATH. Upgrading does not rewrite history, replay held/skipped reports, or replace
+saved plans; inspect explain and doctor before any explicit retry.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		return printJSON(cmd, map[string]any{"build": store.BuildVersion, "store": store.Version, "event": event.Version, "policy": athena.PolicyVersion})
 	}})
 	rootCmd.AddCommand(&cobra.Command{Use: "init", Short: "Initialize an empty versioned store; refuse unsupported data", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {

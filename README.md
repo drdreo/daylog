@@ -153,6 +153,23 @@ daylog explain ENTRY_OR_CANDIDATE
 daylog repair-tail YYYY-MM-DD --confirm
 ```
 
+An empty recent journal is not proof of absent work. `status` shows a current local queue snapshot: `pending`, `processing`, `processed`, and `error` are processing states; `hold` and `skip` are independent dispositions, usually on `processed` items, not extra queue items. Held/skipped reports are not a publication backlog and are reconsidered only with new same-episode evidence or explicit human retry. `processing` alone does not prove a worker is still running. `doctor` summarizes aged unfinished intake, exhausted retries, retained failed plans, local input problems, and today's model-call budget (including dry runs). A runner/model failure does not by itself identify a provider outage. Older local-rejection receipts may still have consumed call allowance; diagnostics neither infer refunds nor change accounting. Diagnostic commands do not retry, replay, scan transcripts, reset budgets, or restart anything.
+
+Use the existing timestamps separately; **status does not aggregate global latest processing or publication times**:
+
+| Question | Existing diagnostic data |
+|---|---|
+| Latest captured input? | `status.last_observed_input` / `candidate.captured_at`, including reports not published |
+| Latest processing-state change? | `queue list` / `explain CANDIDATE`: `receipt.updated_at`; a pending receipt can use capture time, and a retry is not a model call |
+| Was a report published? | `receipt.applied_events`, then `explain ENTRY` → `history[]` confirms recorded writes; a saved plan's proposed event alone does not |
+| Why is it shown on an older day? | `candidate.occurred_at` and `entry.display_at`; recording/recovery can happen later |
+
+`history[].recorded_at` is the event's saved recording timestamp. Athena sets it when making the plan and preserves it during recovery, so it is **not an exact wall-clock publication time** after delayed replay. A crash can also leave a ledger write awaiting receipt acknowledgment; inspect entry history rather than assuming an empty `applied_events` means no write.
+
+`status.coverage` describes **optional native recovery**, not explicit-report availability. Explicit `add` reports can enqueue without transcript scopes. A configured scope is not verified coverage; `source_health.last_scan`, observation times, and errors are saved observations, not a live scan or proof that the source remains fresh. Missing scopes, unsupported sessions, and unsaved/crashed sessions remain coverage gaps. `doctor` also flags unfinished inputs whose retained report text or evidence consists only of `[sensitive line excluded]` markers. This is redaction, not absent work or a provider failure; truncation cannot establish what unretained content contained. Original reports stay private, and redaction remains best-effort.
+
+`version` and `status.build`/`policy` describe **the executable being invoked**, not the checkout, a scheduler's other binary, or the policy that made an old decision. Compare the exact scheduled executable with the one on PATH; `explain` retains `receipt.policy` and `plan.input.policy`. An upgrade does not rewrite history or re-evaluate held/skipped reports. Compatible live plans resume saved operations without another model call; incompatible plans stop for inspection and explicit human retry. Old shadow plans never auto-publish. `doctor` reports ready live policy mismatches without applying or changing them.
+
 Every raw event has `recorded_at` and `occurred_at`; files are partitioned by recording day. The view's required `display_at` drives sorting/display: captured occurrence day for narrative, completion occurrence time for completed todos. `filed_at` preserves the original todo filing time. Amendments do not move work to the correction day. There are no `ts`/`done_ts` compatibility fields.
 
 `days --json` returns `{version: 2, month: "YYYY-MM", days: [{date: "YYYY-MM-DD", count: N}]}` for the requested month (current month by default). It reads an existing store once and counts the same effective entries as `today`: narrative plus completed todos, excluding open obligations, suppressed entries, queue items, and PR snapshots. Dates retain captured display components; amendments do not add a dot on the correction day. Empty months return `days: []`.
