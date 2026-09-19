@@ -2,6 +2,7 @@ package athena
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/drdreo/daylog/internal/capture"
@@ -146,12 +147,11 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 		}
 		groups[k] = append(groups[k], it)
 	}
-	attempts := 0
 	for _, groupKey := range order {
 		if err := ctx.Err(); err != nil {
 			return res, errors.Join(runErr, err)
 		}
-		if attempts >= w.Config.Runner.CallsPerRun {
+		if res.Calls >= w.Config.Runner.CallsPerRun {
 			break
 		}
 		group := groups[groupKey]
@@ -161,10 +161,44 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 			res.Waiting += len(group)
 			continue
 		}
-		attempts++
-		if len(group) > w.Config.BatchSize {
-			group = group[:w.Config.BatchSize]
+		// Preflight each report independently so one unfit report cannot poison
+		// its episode or spend another episode's invocation allowance. Reports
+		// that fit alone but not together stay pending for a later bounded batch.
+		// Bound examined reports too: unfit tails must not consume the entire
+		// worker deadline before an already-selected batch can reach the runner.
+		selected := []capture.Item{}
+		for scanned, it := range group {
+			if scanned >= w.Config.BatchSize {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return res, errors.Join(runErr, err)
+			}
+			if _, err := w.input([]capture.Item{it}); err != nil {
+				if !dryRun {
+					if e := w.fail([]capture.Item{it}, err); e != nil {
+						return res, e
+					}
+				}
+				runErr = errors.Join(runErr, err)
+				continue
+			}
+			trial := append(append([]capture.Item{}, selected...), it)
+			if _, err := w.input(trial); err != nil {
+				var limit *inputLimitError
+				if !errors.As(err, &limit) {
+					return res, errors.Join(runErr, err)
+				}
+				// Finalize this fitting batch instead of searching the whole
+				// episode for a smaller report. The rest remain eligible.
+				break
+			}
+			selected = trial
 		}
+		if len(selected) == 0 {
+			continue
+		}
+		group = append([]capture.Item{}, selected...)
 		// Only same-day exact episode arrivals reopen held/skipped evidence.
 		for _, old := range items {
 			if len(group) >= w.Config.BatchSize {
@@ -177,7 +211,9 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 		in, err := w.input(group)
 		if err != nil {
 			if !dryRun {
-				if e := w.fail(group, err); e != nil {
+				// Do not rewrite already-processed held/skipped receipts on a
+				// local preflight failure. Their evidence remains available.
+				if e := w.fail(selected, err); e != nil {
 					return res, e
 				}
 			}
@@ -213,7 +249,9 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 				}
 			}
 		}
-		// Dry runs still use the model and count against the call budget.
+		// Reserve only after local input validation. Once Runner.Run is
+		// attempted, failures (including provider/startup/output failures) are
+		// charged and never refunded. Dry runs use the same durable allowance.
 		budget.Calls++
 		if err := durable.JSON(budgetPath, budget); err != nil {
 			return res, err
@@ -276,7 +314,7 @@ func (w *Worker) Once(ctx context.Context, dryRun bool) (Result, error) {
 	return res, runErr
 }
 func (w *Worker) input(group []capture.Item) (Input, error) {
-	in := Input{Version: Version, Policy: PolicyVersion, Candidates: []capture.Candidate{}, Evidence: []capture.Evidence{}, Outcomes: []event.Entry{}, Preferences: []Preference{}}
+	in := Input{Version: Version, Policy: PolicyVersion, Candidates: []capture.Candidate{}, Evidence: []capture.Evidence{}, Outcomes: []event.Entry{}, EditableTargets: []event.Target{}, Preferences: []Preference{}}
 	evidence := map[string]bool{}
 	root, _ := store.DataDir()
 	for _, it := range group {
@@ -303,46 +341,93 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 			evidence[id] = true
 		}
 	}
+	// Full current reports, evidence, retry feedback and contract fields get
+	// space before any history. Never shorten a report to make it fit.
+	if err := w.checkInputSize(in); err != nil {
+		if len(group) == 1 {
+			return in, &inputLimitError{fmt.Sprintf("candidate %s cannot fit without outcome context: %v", group[0].Candidate.ID, err)}
+		}
+		return in, &inputLimitError{fmt.Sprintf("current report batch cannot fit without outcome context: %v", err)}
+	}
 	all, err := store.ReadAll()
 	if err != nil {
 		return in, err
 	}
 	effective := event.Effective(all)
-	for _, e := range effective {
-		related := false
+	required := map[string]bool{}
+	distance := map[string]time.Duration{}
+	for id, e := range effective {
 		for _, c := range in.Candidates {
-			if !event.SameProject(e.Context, c.Context) {
-				continue
-			}
-			linked := e.Provenance != nil && e.Provenance.Episode == c.Episode
-			occurrence, _ := time.Parse(time.RFC3339Nano, c.OccurredAt)
-			existing, _ := time.Parse(time.RFC3339Nano, e.DisplayAt)
-			delta := occurrence.Sub(existing)
-			hint := delta >= -24*time.Hour && delta <= 7*24*time.Hour
-			for _, r := range c.Refs {
-				for _, er := range e.Refs {
-					if r == er {
-						hint = true
+			// Exact provenance is safety context even if project metadata no
+			// longer matches. Omitting it could allow protected-input replay.
+			if e.Provenance != nil {
+				for _, previous := range e.Provenance.Candidates {
+					if previous == c.ID {
+						required[id] = true
 					}
 				}
 			}
-			related = related || linked || hint
-		}
-		if related {
-			e.TLDR = capture.Redact(e.TLDR, event.MaxTLDRChars*4)
-			e.Details = capture.Redact(e.Details, event.MaxDetailsChars*4)
-			for i, tag := range e.Tags {
-				e.Tags[i] = capture.Redact(tag, event.MaxTagChars*4)
+			if !event.SameProject(e.Context, c.Context) {
+				continue
 			}
-			e.DoneNote = capture.Redact(e.DoneNote, 4096)
-			e.Reason = capture.Redact(e.Reason, 1024)
+			if c.Episode != "" && e.Provenance != nil && e.Provenance.Episode == c.Episode {
+				required[id] = true
+			}
+			for _, r := range c.Refs {
+				for _, er := range e.Refs {
+					if r == er {
+						required[id] = true
+					}
+				}
+			}
+			occurrence, _ := time.Parse(time.RFC3339Nano, c.OccurredAt)
+			existing, _ := time.Parse(time.RFC3339Nano, e.DisplayAt)
+			delta := occurrence.Sub(existing)
+			if delta >= -24*time.Hour && delta <= 7*24*time.Hour {
+				if delta < 0 {
+					delta = -delta
+				}
+				if previous, ok := distance[id]; !ok || delta < previous {
+					distance[id] = delta
+				}
+			}
+		}
+	}
+	// Keep the surviving outcome behind a linked merge, including chains.
+	for id := range required {
+		for next := effective[id].MergedInto; next != "" && !required[next]; next = effective[next].MergedInto {
+			if _, ok := effective[next]; !ok {
+				break
+			}
+			required[next] = true
+		}
+	}
+	optional := []event.Entry{}
+	for id, e := range effective {
+		_, recent := distance[id]
+		if !required[id] && !recent {
+			continue
+		}
+		e.TLDR = capture.Redact(e.TLDR, event.MaxTLDRChars*4)
+		e.Details = capture.Redact(e.Details, event.MaxDetailsChars*4)
+		for i, tag := range e.Tags {
+			e.Tags[i] = capture.Redact(tag, event.MaxTagChars*4)
+		}
+		e.DoneNote = capture.Redact(e.DoneNote, 4096)
+		e.Reason = capture.Redact(e.Reason, 1024)
+		if required[id] {
 			in.Outcomes = append(in.Outcomes, e)
+		} else {
+			optional = append(optional, e)
 		}
 	}
 	sort.Slice(in.Outcomes, func(i, j int) bool { return in.Outcomes[i].ID < in.Outcomes[j].ID })
 	in.EditableTargets = editableTargets(in)
 	if len(in.Outcomes) > 64 {
-		return in, fmt.Errorf("related outcome context exceeds cap; narrow task linkage")
+		return in, &inputLimitError{"required linked outcome context exceeds 64 outcomes; reports were not truncated"}
+	}
+	if err := w.checkInputSize(in); err != nil {
+		return in, &inputLimitError{fmt.Sprintf("required linked outcome context cannot fit: %v; reports were not truncated", err)}
 	}
 	var prefs struct {
 		Version  int          `json:"version"`
@@ -355,6 +440,7 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 		for _, p := range prefs.Examples {
 			if e, ok := effective[p.Entry]; ok && event.SameProject(e.Context, group[0].Candidate.Context) {
 				p.Reason = capture.Redact(p.Reason, 1024)
+				// Preferences are optional; reserve current/linked facts first.
 				in.Preferences = append(in.Preferences, p)
 			}
 		}
@@ -364,8 +450,50 @@ func (w *Worker) input(group []capture.Item) (Input, error) {
 	} else if !os.IsNotExist(err) {
 		return in, err
 	}
-	return in, nil
+	for len(in.Preferences) > 0 {
+		if err := w.checkInputSize(in); err == nil {
+			break
+		}
+		in.Preferences = in.Preferences[1:]
+	}
+	// Nearest recent context first, with a stable tie-breaker. Keep entire
+	// entries or omit them: slicing details would hide material uncertainty.
+	sort.Slice(optional, func(i, j int) bool {
+		if distance[optional[i].ID] != distance[optional[j].ID] {
+			return distance[optional[i].ID] < distance[optional[j].ID]
+		}
+		return optional[i].ID < optional[j].ID
+	})
+	for _, e := range optional {
+		if len(in.Outcomes) == 64 {
+			break
+		}
+		in.Outcomes = append(in.Outcomes, e)
+		if err := w.checkInputSize(in); err != nil {
+			in.Outcomes = in.Outcomes[:len(in.Outcomes)-1]
+		}
+	}
+	sort.Slice(in.Outcomes, func(i, j int) bool { return in.Outcomes[i].ID < in.Outcomes[j].ID })
+	return in, w.checkInputSize(in)
 }
+
+// inputLimitError permits splitting an oversized batch without treating a
+// storage/read failure as optional context or silently dropping required facts.
+type inputLimitError struct{ message string }
+
+func (e *inputLimitError) Error() string { return e.message }
+
+func (w *Worker) checkInputSize(in Input) error {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	if len(b) > w.Config.Runner.MaxInputBytes {
+		return &inputLimitError{fmt.Sprintf("Athena input exceeds cap (%d bytes, limit %d)", len(b), w.Config.Runner.MaxInputBytes)}
+	}
+	return nil
+}
+
 func (w *Worker) makePlan(mode string, in Input, out Output, id string) Plan {
 	now := w.now()
 	p := Plan{Version: Version, ID: id, Mode: mode, CreatedAt: now.Format(time.RFC3339Nano), InputHash: capture.JSONHash(in), Input: in, Model: w.Config.Runner.Provider + "/" + w.Config.Runner.Model, Applied: map[string]string{}, Status: "ready", Operations: []Operation{}}
