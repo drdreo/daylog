@@ -12,7 +12,7 @@ import (
 )
 
 const Version = 2
-const PolicyVersion = "athena-v2.4"
+const PolicyVersion = "athena-v2.5"
 
 type Preference struct {
 	Entry  string `json:"entry"`

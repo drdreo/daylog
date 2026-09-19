@@ -1,6 +1,6 @@
 # Athena — daylog's gatekeeping subsystem
 
-**Contract:** store/event/view v2; Athena policy `athena-v2.4`. See the [implementation plan](docs/gatekeeper-plan.md), [usage](README.md), and [native contracts](integrations/README.md). The original direct-agent architecture has been replaced; no legacy reader, publisher, migration, or synchronization protocol is supported.
+**Contract:** store/event/view v2; Athena policy `athena-v2.5`. See the [implementation plan](docs/gatekeeper-plan.md), [usage](README.md), and [native contracts](integrations/README.md). The original direct-agent architecture has been replaced; no legacy reader, publisher, migration, or synchronization protocol is supported.
 
 ## Ownership and boundaries
 
@@ -78,7 +78,7 @@ Unkeyed CLI reports remain independent. Stable request keys reject conflicting t
 7. Under the shared store lock, scan the ledger without ignoring corruption; find an existing publication key **before** checking stale revisions; otherwise check current targets/protections, append completely, sync, and release. Acknowledgment follows append. A crash in that gap finds the existing event on replay; a mid-plan crash resumes remaining operations.
 8. A stale target conflict persists a stopped/error plan. Applied operations are neither duplicated nor undone. Explicit retry requests new bounded evaluation against current state. Shadow decisions are not a deferred automatic publication queue.
 
-The v2.4 editorial policy favors one evolving same-day outcome over one row per report. Related implementation, review fixes, and scoped verification normally amend that outcome; duplicate progress and review housekeeping skip. Independent outcomes and material unresolved risks remain visible. Details preserve useful prior substance and final verification gaps without repeated test counts or implementation trivia; no daily entry quota is imposed. This is prospective curation, not an automatic historical cleanup job.
+The v2.5 editorial policy keeps the v2.4 preference for one evolving same-day outcome over one row per report, adding a concise, warm voice with occasional dry wit. Personality changes wording, not the decision schema, permissions, or factual standards. Related implementation, review fixes, and scoped verification normally amend that outcome; duplicate progress and review housekeeping skip. Independent outcomes and material unresolved risks remain visible. Details preserve useful prior substance and final verification gaps without repeated test counts or implementation trivia; no daily entry quota is imposed. This is prospective curation, not an automatic historical cleanup job.
 
 Human amendments pin wording, dismissal persists until human restoration, and merging is one event affecting all targets. Automated corrections cannot modify obligations or human entries. Exact already-protected candidate input cannot be republished by a forced replay. This protects mechanical replay, not an assertion that paraphrased independent reports can never be semantically duplicated.
 
