@@ -10,7 +10,7 @@ if [ "$#" -ne 0 ]; then
     echo '      daylog --data-dir /fresh/private/path setup --help' >&2
     exit 1
 fi
-command -v go >/dev/null 2>&1 || { echo 'Go 1.24+ required' >&2; exit 1; }
+command -v go >/dev/null 2>&1 || { echo 'Go 1.25.13+ required' >&2; exit 1; }
 mkdir -p "$INSTALL_DIR"
 TMP=$(mktemp "$INSTALL_DIR/.daylog-build.XXXXXX")
 trap 'rm -f "$TMP"' EXIT HUP INT TERM

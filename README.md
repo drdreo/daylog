@@ -8,7 +8,7 @@ This is a clean-break **store/event/view v2** implementation of the [gatekeeper 
 
 ## Build and start fresh
 
-Go 1.24+:
+Go 1.25.13+ (patched Go 1.25; the SQLite dependency requires Go 1.25):
 
 ```sh
 ./install.sh                         # binary only; no hooks, store, or network calls
@@ -42,6 +42,12 @@ Athena's voice is warm, concise, and quietly sassy: simplify complicated work an
 `queued` means durably captured, **not visible in the journal**. Athena may rewrite, combine, amend, merge, skip, or hold reports. Concrete agent reports are sufficient source material: Athena curates them rather than requiring independent proof. It preserves reported uncertainty and holds only genuinely unclear or contradictory results. See the single [reporting skill](skills/daylog/SKILL.md) and [instruction block](docs/AGENT_INSTRUCTIONS.md).
 
 Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or `jira:PROJ-45`. `#142` expands using capture-time repository host/path. Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
+
+## Explicit owner memory
+
+`daylog athena memory` stores manually supplied Athena and Dreo records in a separate, explicitly chosen private root. It provides indexed lexical recall, revisioned corrections, logical forgetting and bounded JSON export. `daylog athena dreams` only views stored review artifacts; it never generates them. See [owner-memory commands and limits](docs/athena-memory.md) and [dependency notices](docs/memory-dependencies.md).
+
+This opt-in component does not read the journal, transcripts or repositories, call a model, or change curation, tasks, services or skills. Source text is data, not authorization; same-user CLI flags are not an OS identity boundary.
 
 ## Human controls
 
