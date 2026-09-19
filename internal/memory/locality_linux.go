@@ -7,7 +7,9 @@ import (
 
 // Fail closed on unknown/FUSE filesystems: FUSE may conceal remote storage.
 func localFilesystem(kind int64) bool {
-	switch kind {
+	// Linux filesystem magic is a 32-bit bit pattern. Statfs_t.Type is signed
+	// int32 on 386/arm, so normalize before comparing high-bit magic values.
+	switch uint32(kind) {
 	case unix.EXT4_SUPER_MAGIC, unix.XFS_SUPER_MAGIC, unix.BTRFS_SUPER_MAGIC,
 		unix.TMPFS_MAGIC, unix.RAMFS_MAGIC, unix.OVERLAYFS_SUPER_MAGIC,
 		unix.F2FS_SUPER_MAGIC:

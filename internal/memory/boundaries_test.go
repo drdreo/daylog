@@ -23,6 +23,28 @@ func TestUnsupportedFilesystemRefusedBeforeCreation(t *testing.T) {
 	}
 }
 
+func TestFilesystemRecheckFailureLeavesOnlyEmptyRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "memory")
+	calls := 0
+	err := prepareRoot(root, true, func(string) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("synthetic mount change")
+		}
+		return nil
+	})
+	if err == nil || calls != 2 {
+		t.Fatal("second locality failure ignored")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("created lock or database after locality failure", err)
+	}
+	if err := regularPrivate(root, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCanceledAttachedTransactionAndRecovery(t *testing.T) {
 	s, root := openTest(t)
 	ctx, cancel := context.WithCancel(context.Background())
