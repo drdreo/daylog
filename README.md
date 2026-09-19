@@ -8,7 +8,7 @@ This is a clean-break **store/event/view v2** implementation of the [gatekeeper 
 
 ## Build and start fresh
 
-Go 1.25.13+ (patched Go 1.25; the SQLite dependency requires Go 1.25):
+Go 1.25.13+ (patched Go 1.25). See [dependency notices](docs/dependencies.md).
 
 ```sh
 ./install.sh                         # binary only; no hooks, store, or network calls
@@ -43,13 +43,9 @@ Athena's voice is warm, concise, and quietly sassy: simplify complicated work an
 
 Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or `jira:PROJ-45`. `#142` expands using capture-time repository host/path. Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
 
-## Explicit owner memory
+## Assistant boundary
 
-`daylog athena memory` stores manually supplied Athena and Dreo records in a separate, explicitly chosen private root. It provides indexed lexical recall, revisioned corrections, logical forgetting and bounded JSON export. `daylog athena dreams` only views stored review artifacts; it never generates them. See [owner-memory commands and limits](docs/athena-memory.md) and [dependency notices](docs/memory-dependencies.md).
-
-This opt-in component does not read the journal, transcripts or repositories, call a model, or change curation, tasks, services or skills. Source text is data, not authorization; same-user CLI flags are not an OS identity boundary.
-
-The [on-demand assistant experiment](docs/athena-assistant-experiment.md) records six synthetic brief/review trials, including their failures, for reuse in an existing conversation—not a new runtime or validated autonomous feature. [Current data boundaries and retention](docs/athena-data-boundaries.md) distinguish enforced memory/curator gates from prompt guidance and model-sharing approval.
+Owner memory, dreams, and assistant experiments now live in the separate [Athena repository](https://github.com/drdreo/Athena). Daylog no longer provides `daylog athena memory` or `daylog athena dreams`; there are no forwarding commands or data migrations. The journal curator remains here, unchanged. See [curator data boundaries and retention](docs/athena-data-boundaries.md).
 
 ## Human controls
 
