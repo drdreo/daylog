@@ -58,9 +58,8 @@ public struct Entry: Decodable, Identifiable, Sendable {
 
     public var referenceURL: URL? {
         for ref in refs {
-            guard ref.range(of: #"^gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*$"#,
-                            options: .regularExpression) != nil else { continue }
-            return URL(string: "https://" + ref.dropFirst(6).replacingOccurrences(of: "#", with: "/pull/"))
+            guard ref.hasPrefix("gh:"), let reference = JournalReference(ref) else { continue }
+            return reference.url
         }
         return nil
     }
@@ -74,10 +73,11 @@ public struct JournalReference: Identifiable, Sendable {
 
     public init?(_ ref: String) {
         id = ref
-        if ref.range(of: #"^gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*$"#,
+        if ref.range(of: #"^gh:(pr|issue):[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*$"#,
                      options: .regularExpression) != nil {
+            let issue = ref.hasPrefix("gh:issue:")
             label = String(ref.split(separator: "/").last!)
-            url = URL(string: "https://" + ref.dropFirst(6).replacingOccurrences(of: "#", with: "/pull/"))
+            url = URL(string: "https://" + ref.dropFirst(issue ? 9 : 6).replacingOccurrences(of: "#", with: issue ? "/issues/" : "/pull/"))
         } else if ref.range(of: #"^linear:[A-Z][A-Z0-9]*-[1-9][0-9]*$"#, options: .regularExpression) != nil {
             label = String(ref.dropFirst(7))
             url = URL(string: "https://linear.app/issue/" + label)

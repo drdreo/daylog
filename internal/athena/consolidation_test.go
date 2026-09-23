@@ -12,9 +12,17 @@ import (
 )
 
 func TestSamePRReportsAcrossTurnsAmendOneOutcome(t *testing.T) {
+	testSameGitHubRefReportsAcrossTurns(t, "gh:pr:github.com/o/r#142")
+}
+
+func TestSameIssueReportsAcrossTurnsAmendOneOutcome(t *testing.T) {
+	testSameGitHubRefReportsAcrossTurns(t, "gh:issue:github.com/o/r#142")
+}
+
+func testSameGitHubRefReportsAcrossTurns(t *testing.T, ref string) {
+	t.Helper()
 	w, f, c := fixture(t, "live")
-	// The initial report has no PR; following reports use an explicit stable ref.
-	ref := "gh:pr:github.com/o/r#142"
+	// The initial report has no ref; following reports use an explicit stable ref.
 	f.fn = func(in Input) (Output, error) {
 		return Output{Version: Version, Actions: []Action{{Kind: "publish", Candidates: []string{in.Candidates[0].ID}, Type: "work", Text: "Improved image-edit keyboard behavior", Reason: "user-visible behavior"}}}, nil
 	}
@@ -51,7 +59,7 @@ func TestSamePRReportsAcrossTurnsAmendOneOutcome(t *testing.T) {
 		t.Fatalf("want 4 append-only events, 1 outcome: %d/%d", len(all), len(effective))
 	}
 	for _, e := range effective {
-		if e.Revision != 4 || len(e.Provenance.Candidates) != 4 || e.DisplayAt != c.OccurredAt {
+		if e.Revision != 4 || len(e.Provenance.Candidates) != 4 || e.DisplayAt != c.OccurredAt || len(e.Refs) != 1 || e.Refs[0] != ref {
 			t.Fatal(e)
 		}
 	}
@@ -98,10 +106,18 @@ func TestEditableTargetsMatchValidation(t *testing.T) {
 			}
 		})
 	}
-	c.Refs = []string{"linear:ABC-7"}
-	base.Refs = c.Refs
-	if !linkedOutcome(c, base) {
-		t.Fatal("exact issue ref should also link")
+	for _, ref := range []string{"linear:ABC-7", "gh:issue:github.com/o/r#142"} {
+		c.Refs = []string{ref}
+		base.Refs = c.Refs
+		if !linkedOutcome(c, base) {
+			t.Fatal("exact issue ref should also link", ref)
+		}
+	}
+	for _, ref := range []string{"gh:pr:github.com/o/r#142", "gh:issue:github.com/o/r#143"} {
+		base.Refs = []string{ref}
+		if linkedOutcome(c, base) {
+			t.Fatal("issue linked to a PR or different issue", ref)
+		}
 	}
 }
 

@@ -84,6 +84,17 @@ struct DaylogCoreChecks {
         XCTAssertEqual(entry.references[2].url, nil)
         XCTAssertEqual(JournalReference("gh:pr:github.com@evil.example/o/r#1")?.url, nil)
         XCTAssertEqual(JournalReference("linear:../escape")?.url, nil)
+
+        let issueJSON = json.replacingOccurrences(of: "gh:pr:github.com/owner/repo#42", with: "gh:issue:github.com/owner/repo#42")
+        let issueEntry = try JSONDecoder().decode(Entry.self, from: Data(issueJSON.utf8))
+        XCTAssertEqual(issueEntry.references.map(\.label), ["repo#42", "SCA-3825", "PROJ-1"])
+        XCTAssertEqual(issueEntry.references[0].url?.absoluteString, "https://github.com/owner/repo/issues/42")
+        XCTAssertEqual(issueEntry.referenceURL?.absoluteString, "https://github.com/owner/repo/issues/42")
+        XCTAssertEqual(entry.referenceURL?.absoluteString, "https://github.com/owner/repo/pull/42")
+        XCTAssertEqual(JournalReference("gh:issue:github.example/team/repo#22")?.url?.absoluteString, "https://github.example/team/repo/issues/22")
+        for invalid in ["gh:issue:github.com@evil.example/o/r#1", "gh:issue:github.com/o/r#0", "https://github.com/o/r/issues/1"] {
+            XCTAssertEqual(JournalReference(invalid)?.url, nil)
+        }
     }
 
     func testCalendarMonthGrid() {

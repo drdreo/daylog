@@ -221,8 +221,9 @@ function Get-PrStatusLabel($Pr) {
 
 function Get-EntryUrl($E) {
     foreach ($ref in $E.refs) {
-        if ("$ref" -match '^gh:pr:([a-zA-Z0-9.-]+)/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$') {
-            return "https://$($Matches[1])/$($Matches[2])/pull/$($Matches[3])"
+        if ("$ref" -match '^gh:(pr|issue):([a-zA-Z0-9.-]+)/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$') {
+            $kind = if ($Matches[1] -eq 'issue') { 'issues' } else { 'pull' }
+            return "https://$($Matches[2])/$($Matches[3])/$kind/$($Matches[4])"
         }
     }
     return ''

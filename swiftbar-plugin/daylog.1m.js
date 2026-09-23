@@ -214,8 +214,8 @@ function prStatusLabel(pr) {
 function entryURL(e) {
   var refs = e && e.refs ? e.refs : []
   for (var i = 0; i < refs.length; i++) {
-    var m = /^gh:pr:([a-zA-Z0-9.-]+)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$/.exec(String(refs[i]))
-    if (m) return 'https://' + m[1] + '/' + m[2] + '/pull/' + m[3]
+    var m = /^gh:(pr|issue):([a-zA-Z0-9.-]+)\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#([1-9][0-9]*)$/.exec(String(refs[i]))
+    if (m) return 'https://' + m[2] + '/' + m[3] + (m[1] === 'issue' ? '/issues/' : '/pull/') + m[4]
   }
   return ''
 }

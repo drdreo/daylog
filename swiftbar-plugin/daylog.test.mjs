@@ -23,6 +23,21 @@ test('v2 renderer uses captured display/filed clocks, never old timestamps or li
   assert.ok(!output.includes('wrong.example'));
 });
 
+test('GitHub issue links remain distinct from pull requests', () => {
+  for (const [ref, url] of [
+    ['gh:issue:github.com/drdreo/Athena#22', 'https://github.com/drdreo/Athena/issues/22'],
+    ['gh:issue:github.example/team/repo#22', 'https://github.example/team/repo/issues/22'],
+    ['gh:pr:github.com/drdreo/Athena#22', 'https://github.com/drdreo/Athena/pull/22'],
+    ['gh:issue:github.com@evil.example/team/repo#22', ''],
+    ['gh:issue:github.com/team/repo#0', ''],
+    ['https://github.com/team/repo/issues/22', ''],
+  ]) {
+    assert.equal(plugin.entryURL({refs: [ref]}), url, ref);
+  }
+  assert.equal(plugin.entryURL({refs: ['linear:ABC-1', 'gh:issue:github.com/o/r#22', 'gh:pr:github.com/o/r#22']}),
+    'https://github.com/o/r/issues/22');
+});
+
 test('actions carry the selected store and explicit human identity; proposals need adoption first', () => {
   const ctx = {bin:'/opt/daylog', dataDir:'/fresh/store with spaces'};
   const proposal = {id:'todo',type:'todo',tldr:'Review result',source:'agent:pi',display_at:'2026-08-23T10:00:00Z'};

@@ -39,7 +39,11 @@ Athena's `athena-v2.4` editorial policy keeps the journal at outcome level: rela
 
 `queued` means durably captured, **not visible in the journal**. Athena may rewrite, combine, amend, merge, skip, or hold reports. Concrete agent reports are sufficient source material: Athena curates them rather than requiring independent proof. It preserves reported uncertainty and holds only genuinely unclear or contradictory results. See the single [reporting skill](skills/daylog/SKILL.md) and [instruction block](docs/AGENT_INSTRUCTIONS.md).
 
-Refs are host-qualified: `gh:pr:github.com/owner/repo#142`, `linear:ABC-123`, or `jira:PROJ-45`. `#142` expands using capture-time repository host/path. Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
+Refs distinguish GitHub issues (`gh:issue:github.com/owner/repo#142`) from pull requests (`gh:pr:github.com/owner/repo#142`); `linear:ABC-123` and `jira:PROJ-45` are also supported. `daylog add --ref https://github.com/owner/repo/issues/142 "Report"` normalizes an HTTPS issue URL to `gh:issue`, including GitHub Enterprise hosts. An optional trailing slash, query, and fragment are discarded; credentials, explicit ports, encoded path components, and non-HTTPS URLs are rejected. This is offline path parsing, not a check that the host runs GitHub or that the issue exists. PR URLs are not accepted. `#142` still expands to a **PR** using capture-time repository host/path; do not use it for an issue. Issue links open `/issues/N`, never `/pull/N`, and issue refs do not add PR polling/status.
+
+The store/event/view version remains v2 and existing refs retain their meaning. Older binaries reject the new `gh:issue` refs in candidates/events, and older widgets may omit issue links. Update the CLI/worker and relevant consumers together before storing issue refs; do not mix old writers/readers with that store. Until then, omit `--ref` and include the issue URL in the report text (without typed linkage).
+
+Context has `context.repository.{host,path}`, cwd, worktree, branch, HEAD, and available session/turn/task/parent identifiers. Set `DAYLOG_TASK_ID` to an explicit shared task identity when multiple agents really are collaborating; repository/session alone is not a task key.
 
 ## Human controls
 

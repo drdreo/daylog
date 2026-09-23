@@ -28,6 +28,7 @@ func TestJoinGHLeavesNarrativeEntriesAlone(t *testing.T) {
 			{Event: event.Event{ID: "A", Refs: []string{"linear:ABC-1", "gh:pr:github.com/o/r#7"}}},
 			{Event: event.Event{ID: "B", Refs: []string{"gh:pr:github.com/o/r#999"}}}, // not in snapshot
 			{Event: event.Event{ID: "C", Refs: []string{}}},
+			{Event: event.Event{ID: "D", Refs: []string{"gh:issue:github.com/o/r#7"}}},
 		},
 		OpenTodos:   []Entry{{Event: event.Event{ID: "T", Refs: []string{"gh:pr:github.com/o/r#3"}}}},
 		NeedsTriage: []Entry{},
@@ -39,6 +40,9 @@ func TestJoinGHLeavesNarrativeEntriesAlone(t *testing.T) {
 	}
 	if got := strings.Join(d.OpenTodos[0].Refs, ","); got != "gh:pr:github.com/o/r#3" {
 		t.Fatalf("todo refs changed: %q", got)
+	}
+	if got := strings.Join(d.Entries[3].Refs, ","); got != "gh:issue:github.com/o/r#7" || len(d.PRs) != 2 {
+		t.Fatalf("issue ref affected PR snapshot: ref=%q prs=%+v", got, d.PRs)
 	}
 	if d.PRsFetchedAt != "2026-08-23T12:00:00Z" {
 		t.Errorf("prs_fetched_at = %q", d.PRsFetchedAt)
