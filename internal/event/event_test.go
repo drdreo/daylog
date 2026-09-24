@@ -35,6 +35,50 @@ func TestContract(t *testing.T) {
 		}
 	}
 }
+func TestNormalizeGitHubIssueRefs(t *testing.T) {
+	repo := Repository{"github.example", "other/repo"}
+	for _, tc := range []struct{ input, want string }{
+		{"gh:issue:github.com/drdreo/Athena#22", "gh:issue:github.com/drdreo/Athena#22"},
+		{"https://github.com/drdreo/Athena/issues/22", "gh:issue:github.com/drdreo/Athena#22"},
+		{" https://GITHUB.COM/drdreo/Athena/issues/22/?q=hello#issuecomment-123 ", "gh:issue:github.com/drdreo/Athena#22"},
+		{"https://github.example/team/.github/issues/9", "gh:issue:github.example/team/.github#9"},
+		{"gh:pr:github.com/drdreo/Athena#22", "gh:pr:github.com/drdreo/Athena#22"},
+		{"#22", "gh:pr:github.example/other/repo#22"},
+		{"ABC-12", "linear:ABC-12"},
+		{"jira:ABC-12", "jira:ABC-12"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := NormalizeRef(tc.input, repo)
+			if err != nil || got != tc.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tc.want)
+			}
+			if again, err := NormalizeRef(got, Repository{}); err != nil || again != got {
+				t.Fatalf("canonical ref did not round trip: %q, %v", again, err)
+			}
+		})
+	}
+	for _, input := range []string{
+		"gh:issue:owner/repo#22", "gh:issue:github.com/o/r#0",
+		"gh:issue:github.com@evil.example/o/r#22", "gh:issue:github.com/o/r#-1",
+		"http://github.com/o/r/issues/22", "javascript://github.com/o/r/issues/22",
+		"//github.com/o/r/issues/22", "https://user:secret@github.com/o/r/issues/22",
+		"https://github.com@evil.example/o/r/issues/22", "https://github.com:443/o/r/issues/22",
+		"https://github.com/o/r/issues/0", "https://github.com/o/r/issues/01",
+		"https://github.com/o/r/issues/-1", "https://github.com/o/r/issues/22/extra",
+		"https://github.com/o/r/pull/22", "https://github.com/o/r/issues",
+		"https://github.com/o%2Fr/r/issues/22", "https://github.com/o/r/issues/%32%32",
+		"https://github.com/../r/issues/22", "https://github.com/o/./issues/22",
+		"https://github.com/o/r/issues/22\nhttps://evil.example",
+		"https://github.com/o/r/issues/22#%ZZ",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if got, err := NormalizeRef(input, repo); err == nil {
+				t.Fatalf("accepted %q as %q", input, got)
+			}
+		})
+	}
+}
+
 func TestHumanProtection(t *testing.T) {
 	now := time.Now()
 	base := Event{ID: NewID(now), Type: TypeWork, TLDR: "original", Source: "agent:pi", OccurredAt: now.Format(time.RFC3339)}

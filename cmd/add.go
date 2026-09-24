@@ -76,7 +76,7 @@ func init() {
 		return nil
 	}}
 	c.Flags().StringVarP(&typ, "type", "t", event.TypeNote, "work|sidequest|note|todo")
-	c.Flags().StringArrayVarP(&refs, "ref", "r", nil, "typed ref or #N in a repository; repeatable")
+	c.Flags().StringArrayVarP(&refs, "ref", "r", nil, "typed ref, HTTPS GitHub issue URL, or #N for a PR in a repository; repeatable")
 	c.Flags().StringVar(&source, "source", "", "source override (default DAYLOG_SOURCE, then human:cli)")
 	c.Flags().StringVar(&key, "idempotency-key", "", "stable caller request key; reuse requires identical content")
 	rootCmd.AddCommand(c)

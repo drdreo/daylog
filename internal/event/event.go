@@ -4,11 +4,13 @@ package event
 import (
 	"crypto/rand"
 	"fmt"
-	"github.com/oklog/ulid/v2"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/oklog/ulid/v2"
 )
 
 const Version = 2
@@ -183,12 +185,20 @@ func ValidateVerdict(v string) error {
 	return nil
 }
 
-var typedRef = regexp.MustCompile(`^(gh:pr:[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*|(linear|jira):[A-Z][A-Z0-9]*-[1-9][0-9]*)$`)
+var typedRef = regexp.MustCompile(`^(gh:(pr|issue):[a-zA-Z0-9.-]+/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*|(linear|jira):[A-Z][A-Z0-9]*-[1-9][0-9]*)$`)
+var issueURLPath = regexp.MustCompile(`^/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)/issues/([1-9][0-9]*)/?$`)
 var shortRef = regexp.MustCompile(`^#[1-9][0-9]*$`)
 var trackerRef = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[1-9][0-9]*$`)
 
 func NormalizeRef(r string, repo Repository) (string, error) {
 	r = strings.TrimSpace(r)
+	// Issue URLs are intake shorthand, never PRs. Keep only the issue identity,
+	// discarding query/fragment navigation. Host-qualified refs also support GHES.
+	if u, err := url.Parse(r); err == nil && u.Scheme == "https" && u.User == nil && u.Host != "" && u.Host == u.Hostname() {
+		if m := issueURLPath.FindStringSubmatch(u.EscapedPath()); m != nil && m[1] != "." && m[1] != ".." && m[2] != "." && m[2] != ".." {
+			r = "gh:issue:" + strings.ToLower(u.Host) + "/" + m[1] + "/" + m[2] + "#" + m[3]
+		}
+	}
 	if shortRef.MatchString(r) && repo.Key() != "" {
 		r = "gh:pr:" + repo.Key() + r
 	}
@@ -196,7 +206,7 @@ func NormalizeRef(r string, repo Repository) (string, error) {
 		r = "linear:" + r
 	}
 	if !typedRef.MatchString(r) {
-		return "", fmt.Errorf("invalid ref %q: use gh:pr:host/owner/repo#N, linear:ID-N, jira:ID-N, or #N in a repository", r)
+		return "", fmt.Errorf("invalid ref %q: use gh:issue:host/owner/repo#N, an HTTPS GitHub issue URL, gh:pr:host/owner/repo#N, linear:ID-N, jira:ID-N, or #N for a PR in a repository", r)
 	}
 	return r, nil
 }
