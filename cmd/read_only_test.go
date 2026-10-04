@@ -7,7 +7,7 @@ import (
 )
 
 func TestJournalReadsNeverInitializeStores(t *testing.T) {
-	for _, args := range [][]string{{"today", "--json"}, {"today"}, {"render"}, {"days", "--json"}} {
+	for _, args := range [][]string{{"today", "--json"}, {"today"}, {"render"}, {"days", "--json"}, {"recall", "--project", "github.com/team/project"}} {
 		t.Run(args[0]+"-"+args[len(args)-1], func(t *testing.T) {
 			home := t.TempDir()
 			if out, err := runCLI(t, home, "human:widget", args...); err == nil {

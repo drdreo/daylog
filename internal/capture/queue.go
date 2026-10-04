@@ -227,15 +227,34 @@ func SafeID(id string) bool {
 	}) < 0
 }
 func (s *Spool) List(status string) ([]Item, error) {
+	return s.list(status, nil)
+}
+
+// ListProject filters immutable capture-time repository identity before reading
+// receipts. It never falls back to cwd, worktree, refs, or repository basename.
+// The caller must validate the existing store; this reader creates nothing.
+func (s *Spool) ListProject(repo event.Repository) ([]Item, error) {
+	if repo.Host == "" || repo.Path == "" {
+		return nil, fmt.Errorf("explicit repository host and path required")
+	}
+	return s.list("", &repo)
+}
+
+func (s *Spool) list(status string, repo *event.Repository) ([]Item, error) {
 	if status != "" && status != "pending" && status != "processing" && status != "processed" && status != "error" {
 		return nil, fmt.Errorf("invalid queue status")
 	}
-	paths, err := filepath.Glob(filepath.Join(s.Root, "candidates", "*.json"))
-	if err != nil {
+	dir := filepath.Join(s.Root, "candidates")
+	files, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	out := []Item{}
-	for _, p := range paths {
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+		p := filepath.Join(dir, file.Name())
 		var c Candidate
 		if err := durable.Read(p, &c); err != nil {
 			return nil, err
@@ -245,6 +264,9 @@ func (s *Spool) List(status string) ([]Item, error) {
 		}
 		if !SafeID(c.ID) || filepath.Base(p) != c.ID+".json" {
 			return nil, fmt.Errorf("candidate filename mismatch")
+		}
+		if repo != nil && c.Context.Repository != *repo {
+			continue
 		}
 		r := Receipt{Version: Version, CandidateID: c.ID, Status: "pending", UpdatedAt: c.CapturedAt, AppliedEvents: []string{}}
 		if err := durable.Read(filepath.Join(s.Root, "receipts", c.ID+".json"), &r); err != nil && !os.IsNotExist(err) {
