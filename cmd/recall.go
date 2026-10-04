@@ -20,12 +20,16 @@ const recallMaxBytes = 48 * 1024
 
 // This is a read response, not a persisted store or event schema.
 type projectRecall struct {
-	Version    int              `json:"version"`
-	Project    event.Repository `json:"project"`
-	ObservedAt string           `json:"observed_at"`
-	Entries    []event.Entry    `json:"entries"`
-	Reports    []recallReport   `json:"reports"`
-	Coverage   recallCoverage   `json:"coverage"`
+	Version    int                  `json:"version"`
+	Project    event.Repository     `json:"project"`
+	ObservedAt string               `json:"observed_at"`
+	Entries    []recallJournalEntry `json:"entries"`
+	Reports    []recallReport       `json:"reports"`
+	Coverage   recallCoverage       `json:"coverage"`
+}
+type recallJournalEntry struct {
+	event.Entry
+	RecordedEvents []recallRecorded `json:"recorded_events"`
 }
 type recallCoverage struct {
 	Limit           int      `json:"limit_per_collection"`
@@ -71,20 +75,27 @@ func recallProject(value string) (event.Repository, error) {
 func readProjectRecall(repo event.Repository, limit int) (projectRecall, error) {
 	result := projectRecall{
 		Version: 1, Project: repo, ObservedAt: time.Now().Format(time.RFC3339Nano),
-		Entries: []event.Entry{}, Reports: []recallReport{},
+		Entries: []recallJournalEntry{}, Reports: []recallReport{},
 		Coverage: recallCoverage{Limit: limit,
 			EntryOrder: "display_at_desc_id_asc", ReportOrder: "occurred_at_desc_id_asc",
 			Exclusions: []string{"missing_or_other_repository_identity", "todos", "github_snapshots", "native_evidence_excerpts", "plans", "transcripts", "uncaptured_work"}},
+	}
+	root, err := store.DataDir()
+	if err != nil {
+		return result, fmt.Errorf("project recall store unavailable; evidence withheld")
+	}
+	// The shared ledger reader interpolates the root into a Glob pattern.
+	// Reject pattern-sensitive roots before reading, rather than silently
+	// omitting the real ledger or reading a matching sibling store. Backslash
+	// is an escape on Unix, but a literal separator in Windows Glob patterns.
+	if strings.ContainsAny(root, "*?[") || (os.PathSeparator != '\\' && strings.Contains(root, `\`)) {
+		return result, fmt.Errorf("project recall does not support glob-sensitive store paths; evidence withheld")
 	}
 	// Reuse the existing validated, locked ledger read. Never initialize a store,
 	// open a writer spool, load plans/evidence, or invoke the curation worker.
 	all, err := store.ReadAllExisting()
 	if err != nil {
 		return result, fmt.Errorf("project recall ledger read failed; evidence withheld")
-	}
-	root, err := store.DataDir()
-	if err != nil {
-		return result, fmt.Errorf("project recall store unavailable; evidence withheld")
 	}
 	// The existing ledger reader uses Glob, which can hide directory read
 	// errors. Distinguish an absent (empty) journal from an unreadable one.
@@ -101,7 +112,7 @@ func readProjectRecall(repo event.Repository, limit int) (projectRecall, error) 
 		if entry.Context.Repository == repo && event.Narrative(entry.Type) {
 			// Retain dismissed/merged identities and their current flags, rather
 			// than laundering an old report into a still-active accomplishment.
-			result.Entries = append(result.Entries, entry)
+			result.Entries = append(result.Entries, recallJournalEntry{Entry: entry, RecordedEvents: []recallRecorded{}})
 		}
 	}
 	sort.Slice(result.Entries, func(i, j int) bool {
@@ -118,6 +129,10 @@ func readProjectRecall(repo event.Repository, limit int) (projectRecall, error) 
 	// never certifies a write; only a matching event in this ledger read does.
 	byCandidate := map[string][]recallRecorded{}
 	byEvent := map[string]recallRecorded{}
+	entryIndexes := map[string]int{}
+	for i, entry := range result.Entries {
+		entryIndexes[entry.ID] = i
+	}
 	for _, e := range all {
 		ids := []string{}
 		if len(e.Targets) == 0 {
@@ -141,6 +156,15 @@ func readProjectRecall(repo event.Repository, limit int) (projectRecall, error) 
 		}
 		link := recallRecorded{e.ID, e.Source, e.Type, e.RecordedAt, e.OccurredAt, ids}
 		byEvent[e.ID] = link
+		// Folded entries retain the original event source/timestamps even when
+		// their wording or suppression state changes. Preserve all affecting
+		// event metadata in ledger order, including human corrections with no
+		// candidate provenance or receipt link.
+		for _, id := range ids {
+			if i, ok := entryIndexes[id]; ok {
+				result.Entries[i].RecordedEvents = append(result.Entries[i].RecordedEvents, link)
+			}
+		}
 		if e.Provenance != nil {
 			for _, id := range e.Provenance.Candidates {
 				byCandidate[id] = append(byCandidate[id], link)
@@ -204,7 +228,10 @@ JSON only; limit is 1..5 per collection (default 5), with a 48 KiB total output 
 Orders are reported occurrence/display time descending, then ID ascending, not
 current truth or publication authority. Reports include all processing states;
 processed/hold/skip is not publication. recorded_events links observed ledger
-writes, not independent outcomes or proof of execution. No native excerpts,
+writes, not independent outcomes or proof of execution. Entries also retain all
+affecting event IDs, sources and timestamps in ledger order, including corrections.
+Store paths containing glob metacharacters are unsupported and fail closed.
+No native excerpts,
 plans, transcripts, curation, initialization, network, or snapshot reads.
 The existing ledger and candidate index are read locally before native filtering;
 limits bound returned evidence, not disk scans. Reads are not an atomic snapshot.

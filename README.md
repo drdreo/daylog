@@ -183,7 +183,11 @@ returned evidence, not disk scans. There is no cursor or automatic paging.
 
 Entries preserve folded current wording, revisions, sources/provenance and
 suppression flags, including dismissed/merged identities so stale reports do not
-silently become current accomplishments. Reports preserve IDs, capture/occurrence
+silently become current accomplishments. Each entry's `recorded_events` retains
+all affecting event IDs, sources, types and occurrence/recording timestamps in
+ledger order, including human corrections. The folded entry's top-level source
+and timestamps still describe its original event, not the author/time of later
+wording or state changes. Reports preserve IDs, capture/occurrence
 times, sources, origins, completeness and receipts. All processing states are
 included; processed hold/skip/outcome is not itself publication. A report's
 `publication_state:recorded` requires matching ledger writes; `recorded_events`
@@ -199,7 +203,9 @@ or PR snapshots, invokes curation, retries reports, or imports into Athena memor
 Compact hook/recovery candidates are included, but their separate supporting
 excerpts are not. Todos are excluded. Ledger/queue read errors and oversized output
 fail closed with no evidence emitted; missing/older CLI or failed reads are gaps,
-not empty results. It uses the existing ledger lock (which can create a lock file),
+not empty results. Store paths containing `*`, `?`, `[` or Unix backslashes are
+unsupported and fail closed before reading because the shared ledger reader
+interprets them as glob patterns. It uses the existing ledger lock (which can create a lock file),
 without changing candidates, receipts or journal events. No migration or install
 is required to build/test; activation of a new binary remains a separate action.
 

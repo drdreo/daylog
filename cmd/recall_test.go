@@ -172,6 +172,14 @@ func TestRecallCrashLinksAndCurrentCorrectedState(t *testing.T) {
 	if r.Entries[0].TLDR != amend.TLDR || !r.Entries[0].Dismissed || !r.Entries[0].Pinned || r.Entries[0].Revision != 3 {
 		t.Fatalf("%+v", r.Entries)
 	}
+	wantEvents := []recallRecorded{
+		{e.ID, e.Source, e.Type, e.RecordedAt, e.OccurredAt, []string{e.ID}},
+		{amend.ID, amend.Source, amend.Type, amend.RecordedAt, amend.OccurredAt, []string{e.ID}},
+		{dismiss.ID, dismiss.Source, dismiss.Type, dismiss.RecordedAt, dismiss.OccurredAt, []string{e.ID}},
+	}
+	if !reflect.DeepEqual(r.Entries[0].RecordedEvents, wantEvents) {
+		t.Fatalf("missing correction attribution: %+v", r.Entries[0].RecordedEvents)
+	}
 	if r.Reports[0].Receipt.Status != "pending" || r.Reports[0].PublicationState != "recorded" {
 		t.Fatalf("%+v", r.Reports)
 	}
@@ -191,12 +199,17 @@ func TestRecallMergedContributorsRemainLinkedNotIndependentOutcomes(t *testing.T
 		t.Fatal(err)
 	}
 	r := recallResult(t, home)
-	byID := map[string]event.Entry{}
+	byID := map[string]recallJournalEntry{}
 	for _, entry := range r.Entries {
 		byID[entry.ID] = entry
 	}
 	if byID[first.ID].TLDR != merge.TLDR || len(byID[first.ID].Contributors) != 2 || byID[second.ID].MergedInto != first.ID {
 		t.Fatalf("%+v", r.Entries)
+	}
+	for _, entry := range r.Entries {
+		if len(entry.RecordedEvents) != 2 || entry.RecordedEvents[1].ID != merge.ID || entry.RecordedEvents[1].Source != "human:cli" || !reflect.DeepEqual(entry.RecordedEvents[1].EntryIDs, []string{first.ID, second.ID}) {
+			t.Fatalf("missing merge attribution: %+v", entry.RecordedEvents)
+		}
 	}
 	for _, report := range r.Reports {
 		if report.PublicationState != "recorded" || len(report.RecordedEvents) != 1 {
@@ -281,6 +294,33 @@ func TestRecallReadAndOutputFailuresWithholdAllEvidence(t *testing.T) {
 			}
 			if exit, ok := err.(*exec.ExitError); ok && (strings.Contains(string(exit.Stderr), "private malformed text") || strings.Contains(string(exit.Stderr), "SECRET-MUST")) {
 				t.Fatal("failure leaked source", string(exit.Stderr))
+			}
+		})
+	}
+}
+
+func TestRecallRejectsGlobSensitiveStorePaths(t *testing.T) {
+	for _, name := range []string{"store[1]", "store*", "store?", `store\name`} {
+		t.Run(name, func(t *testing.T) {
+			if os.PathSeparator == '\\' && strings.ContainsAny(name, `*?\`) {
+				t.Skip("not a literal Windows directory name")
+			}
+			home, q := recallFixture(t)
+			c := recallCandidate(t, q, "report", "2026-10-01T10:00:00Z", recallRepo)
+			recallEntry(t, "Existing publication must not silently disappear", c.OccurredAt, recallRepo, c.ID)
+			root := filepath.Join(home, name)
+			if err := os.Rename(filepath.Join(home, "data"), root); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(testBinary, "--data-dir", root, "recall", "--project", recallRepo.Key())
+			cmd.Env = cliEnv(home, "agent:pi")
+			out, err := cmd.Output()
+			if err == nil || len(out) != 0 {
+				t.Fatal("glob-sensitive root returned evidence", string(out), err)
+			}
+			exit, ok := err.(*exec.ExitError)
+			if !ok || !strings.Contains(string(exit.Stderr), "glob-sensitive store paths") {
+				t.Fatalf("expected explicit unsupported-path gap: %v", err)
 			}
 		})
 	}
