@@ -187,8 +187,10 @@ silently become current accomplishments. Each entry's `recorded_events` retains
 all affecting event IDs, sources, types and occurrence/recording timestamps in
 ledger order, including human corrections. The folded entry's top-level source
 and timestamps still describe its original event, not the author/time of later
-wording or state changes. Reports preserve IDs, capture/occurrence
-times, sources, origins, completeness and receipts. All processing states are
+wording or state changes. If a historical merge connects the selected repository
+to a repository-less or different-identity entry, recall withholds all evidence
+rather than reuse the writer's cwd fallback or omit correction attribution.
+Reports preserve IDs, capture/occurrence times, sources, origins, completeness and receipts. All processing states are
 included; processed hold/skip/outcome is not itself publication. A report's
 `publication_state:recorded` requires matching ledger writes; `recorded_events`
 contains their IDs, sources, timestamps and affected entry IDs. Provenance catches

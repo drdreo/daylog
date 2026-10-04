@@ -218,6 +218,40 @@ func TestRecallMergedContributorsRemainLinkedNotIndependentOutcomes(t *testing.T
 	}
 }
 
+func TestRecallRejectsMixedIdentityMergeHistory(t *testing.T) {
+	for _, selectedPrimary := range []bool{true, false} {
+		name := "selected-primary"
+		if !selectedPrimary {
+			name = "selected-contributor"
+		}
+		t.Run(name, func(t *testing.T) {
+			home, _ := recallFixture(t)
+			at := "2026-10-01T10:00:00Z"
+			selected := recallEntry(t, "Selected project", at, recallRepo, "")
+			unscoped := recallEntry(t, "Repository-less contributor", at, event.Repository{}, "")
+			merge := newEvent(time.Now(), "human:editor", "merge", "Mixed-identity wording")
+			merge.Targets = []event.Target{{ID: selected.ID, Revision: 1}, {ID: unscoped.ID, Revision: 1}}
+			if !selectedPrimary {
+				merge.Targets[0], merge.Targets[1] = merge.Targets[1], merge.Targets[0]
+			}
+			// Existing writers permit this via same-cwd fallback. Recall must not.
+			if err := store.Append(merge); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(testBinary, "--data-dir", filepath.Join(home, "data"), "recall", "--project", recallRepo.Key())
+			cmd.Env = cliEnv(home, "agent:pi")
+			out, err := cmd.Output()
+			if err == nil || len(out) != 0 {
+				t.Fatal("mixed-identity history returned evidence", string(out), err)
+			}
+			exit, ok := err.(*exec.ExitError)
+			if !ok || !strings.Contains(string(exit.Stderr), "history crosses repository identities") {
+				t.Fatalf("expected explicit scope gap: %v", err)
+			}
+		})
+	}
+}
+
 func TestRecallLimitsOrderAndEmptyCoverage(t *testing.T) {
 	home, q := recallFixture(t)
 	r := recallResult(t, home)

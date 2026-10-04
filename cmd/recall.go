@@ -145,13 +145,22 @@ func readProjectRecall(repo event.Repository, limit int) (projectRecall, error) 
 		// Corrections retain the target's project, not a correcting shell's cwd.
 		// Reject links that include any target outside the selected repository.
 		inScope := len(ids) > 0
+		hasSelectedTarget := false
 		for _, id := range ids {
 			entry, ok := current[id]
 			if !ok || entry.Context.Repository != repo || !event.Narrative(entry.Type) {
 				inScope = false
+			} else {
+				hasSelectedTarget = true
 			}
 		}
 		if !inScope {
+			// Existing merges can use a cwd fallback for repository-less targets.
+			// Recall must not adopt that fallback or emit merged wording whose
+			// full attribution cannot stay within the explicit repository scope.
+			if hasSelectedTarget {
+				return result, fmt.Errorf("project recall history crosses repository identities; evidence withheld")
+			}
 			continue
 		}
 		link := recallRecorded{e.ID, e.Source, e.Type, e.RecordedAt, e.OccurredAt, ids}
@@ -231,6 +240,7 @@ processed/hold/skip is not publication. recorded_events links observed ledger
 writes, not independent outcomes or proof of execution. Entries also retain all
 affecting event IDs, sources and timestamps in ledger order, including corrections.
 Store paths containing glob metacharacters are unsupported and fail closed.
+Mixed-repository-identity history affecting this project also fails closed.
 No native excerpts,
 plans, transcripts, curation, initialization, network, or snapshot reads.
 The existing ledger and candidate index are read locally before native filtering;
