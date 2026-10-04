@@ -154,12 +154,54 @@ Pause by stopping the scheduled job. For a one-off preview, use `daylog curate -
 ```sh
 daylog today [YYYY-MM-DD] --json
 daylog days [YYYY-MM] --json          # nonempty journal days and entry counts
+daylog recall --project github.com/owner/repo --limit 5  # scoped work evidence (JSON)
 daylog render [YYYY-MM-DD]
 daylog status --json
 daylog doctor --check-model          # catalog check, no inference
 daylog explain ENTRY_OR_CANDIDATE
 daylog repair-tail YYYY-MM-DD --confirm
 ```
+
+`recall` returns bounded project work evidence: separate current narrative `entries`
+and private candidate/receipt `reports`, including unpublished and processed inputs.
+The required `--project HOST/OWNER/REPO` matches the captured
+`context.repository.{host,path}` exactly and case-sensitively, never cwd, worktree,
+refs, aliases or repository basename. Missing identities are excluded; there is no
+all-project/path fallback. Supply the explicit Daylog identity rather than deriving
+an Athena memory binding from it. Private report reads require their own source and
+provider authorization; this command does not grant either.
+
+The JSON-only response has `version:1` (a read response, not a new store schema),
+`project`, `observed_at`, `entries`, `reports` and `coverage`. `--limit` is 1–5 per
+collection, default 5, with a 48 KiB total output cap. Entries sort by `display_at`
+and reports by `occurred_at`, descending by instant then ID ascending; recency is
+not authority. Coverage includes exact matching/omitted counts for this read,
+orders, exclusions, `atomic_snapshot:false` and `complete_history:false`. Even an
+empty/short page is not complete history. Current implementation reads the existing
+ledger and candidate index locally before native filtering; the limits bound
+returned evidence, not disk scans. There is no cursor or automatic paging.
+
+Entries preserve folded current wording, revisions, sources/provenance and
+suppression flags, including dismissed/merged identities so stale reports do not
+silently become current accomplishments. Reports preserve IDs, capture/occurrence
+times, sources, origins, completeness and receipts. All processing states are
+included; processed hold/skip/outcome is not itself publication. A report's
+`publication_state:recorded` requires matching ledger writes; `recorded_events`
+contains their IDs, sources, timestamps and affected entry IDs. Provenance catches
+append-before-ack crashes, including a pending receipt with a recorded write.
+Do not double-count linked reports and entries as separate outcomes or independent
+corroboration. Linked entries may fall outside the bounded page, leaving their
+current wording/state unknown there. `not_observed` means no linked write observed,
+not proof a report was never published. Receipt and ledger reads are not atomic.
+
+`recall` never initializes a missing store, reads native excerpts/plans/transcripts
+or PR snapshots, invokes curation, retries reports, or imports into Athena memory.
+Compact hook/recovery candidates are included, but their separate supporting
+excerpts are not. Todos are excluded. Ledger/queue read errors and oversized output
+fail closed with no evidence emitted; missing/older CLI or failed reads are gaps,
+not empty results. It uses the existing ledger lock (which can create a lock file),
+without changing candidates, receipts or journal events. No migration or install
+is required to build/test; activation of a new binary remains a separate action.
 
 An empty recent journal is not proof of absent work. `status` shows a current local queue snapshot: `pending`, `processing`, `processed`, and `error` are processing states; `hold` and `skip` are independent dispositions, usually on `processed` items, not extra queue items. Held/skipped reports are not a publication backlog and are reconsidered only with new same-episode evidence or explicit human retry. `processing` alone does not prove a worker is still running. `doctor` summarizes aged unfinished intake, exhausted retries, retained failed plans, local input problems, and today's model-call budget (including dry runs). A runner/model failure does not by itself identify a provider outage. Older local-rejection receipts may still have consumed call allowance; diagnostics neither infer refunds nor change accounting. Diagnostic commands do not retry, replay, scan transcripts, reset budgets, or restart anything.
 
